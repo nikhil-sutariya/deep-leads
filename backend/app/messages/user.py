@@ -1,0 +1,38 @@
+class ErrorMessage:
+    server_error = "Something went wrong"
+    user_already_exists = "Email address already registered"
+    user_not_added = "Something went wrong while signing up"
+    user_email_not_exists = "User with this email not exists"
+    wrong_email = "Incorrect email"
+    wrong_password = "Incorrect password"
+    empty_refresh_token = "Please provide refresh token"
+    invalid_email = "Please enter valid email address"
+    profile_data_not_found = "Profile data not found please login again"
+    forgot_password_link_expire = "Link is expired please request a new link"
+    invalid_secret_token = "Invalid link please request new email"
+    same_not_password = "New password and confirm password are not same"
+    same_password = "Current password and new password not be same"
+    password_not_updated = "Something went wrong while updating password"
+    wrong_current_password = "Current password is wrong"
+    profile_not_updated = "Something went wrong while updating profile details please try again later"
+    invalid_image_type = "Only JPG, PNG, and SVG files are allowed."
+    user_not_authorized_to_login = "Only admin is authorized to login"
+
+class InfoMessage:
+    user_created = "User created successfully"
+    login_success = "Login successful"
+    logout_success = "Logout successful"
+    access_token_refreshed = "Access token refreshed successfully"
+    forgot_password_mail_sent = "Forgot password email sent successfully"
+    password_updated = "Password updated successfully"
+    user_account_fetched = "User account fetched successfully"
+    profile_updated = "Profile updated successfully"
+    available_notifications = "Available notifications"
+    notification_seen = "Notification marked as seen"
+
+class NotificationMessage:
+    profile_updated = "Your profile details updated successfully"
+    profile_pic_updated = "Your profile picture updated successfully"
+    reset_password = "Password reset successfully"
+    change_password = "Password changed successfully"
+    

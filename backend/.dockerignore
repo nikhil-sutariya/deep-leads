@@ -1,0 +1,61 @@
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Python build / cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local secrets (mounted/loaded at runtime instead)
+.env
+.env.local
+.env.*.local
+
+# Runtime artifacts (mounted as volumes by docker-compose)
+logs/
+uploads/
+*.log
+
+# IDE / editor
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs / sample data not needed inside the image
+*.md
+sample.json
+sample.py
+test.py
+example_usage.py
+web_search.py
+customers/
+
+# Docker files themselves (avoid invalidating cache when only compose changes)
+docker-compose.yml
+docker-compose.*.yml

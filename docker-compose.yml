@@ -1,0 +1,69 @@
+# DeepLeads AI — local dev stack
+#
+# Usage:
+#   docker compose up --build           # build + start everything
+#   docker compose down                 # stop containers (keeps DB volume)
+#   docker compose down -v              # stop + wipe the Postgres volume
+#
+# Postgres credentials default to deep_leads / deep_leads / deep_leads. Override
+# by setting POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB in your .env.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: deepleads-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-deep_leads}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deep_leads}
+      POSTGRES_DB: ${POSTGRES_DB:-deep_leads}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-deep_leads} -d ${POSTGRES_DB:-deep_leads}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deepleads-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-deep_leads}:${POSTGRES_PASSWORD:-deep_leads}@db:5432/${POSTGRES_DB:-deep_leads}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./backend/logs:/app/logs
+      - ./backend/uploads:/app/uploads
+    command:
+      - sh
+      - -c
+      - python -m scripts.init_db && uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: deepleads-frontend
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      NEXT_PUBLIC_API_URL: http://app:8000
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+
+volumes:
+  postgres_data:

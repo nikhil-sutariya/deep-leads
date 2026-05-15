@@ -1,0 +1,2 @@
+# AI prompts and templates
+

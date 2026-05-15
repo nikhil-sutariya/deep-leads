@@ -1,0 +1,51 @@
+# FastAPI Backend
+fastapi[standard]
+pydantic
+pydantic-settings
+
+# AI/ML
+google-genai
+openai
+
+# Database
+sqlalchemy
+alembic
+psycopg2-binary
+asyncpg
+
+# Data Processing
+pandas
+pydantic-extra-types
+
+# Email
+sendgrid
+jinja2
+
+# HTTP & API
+httpx
+aiohttp
+
+# Utilities
+python-dotenv
+python-multipart
+loguru
+
+# Background Tasks
+celery
+redis
+
+# Monitoring & Logging
+prometheus-client
+
+# Testing
+pytest
+pytest-asyncio
+httpx
+
+# Image Processing
+pillow
+
+# Authentication
+pyjwt
+argon2-cffi
+passlib[argon2]
