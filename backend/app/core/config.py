@@ -1,7 +1,7 @@
 """
 Application configuration management
 """
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, List
 from functools import lru_cache
 
@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_username: Optional[str] = None
     smtp_password: Optional[str] = None
+    smtp_from_email: Optional[str] = None
+
+    api_base_url: str = "http://localhost:8000"
     
     # Application Settings
     environment: str = "development"
@@ -50,9 +53,11 @@ class Settings(BaseSettings):
     default_admin_email: str = "admin@example.com"
     default_admin_password: str = "Admin@1234"
     
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="allow",  # This permits extra keys from .env
         case_sensitive = False
+    )
 
 
 @lru_cache()

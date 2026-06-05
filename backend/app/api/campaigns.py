@@ -1,32 +1,41 @@
 """
 API endpoints for email campaign management
 """
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 import uuid
-from typing import List
 from datetime import datetime
-from loguru import logger
+from typing import List
 
-from app.core.database import get_db
-from app.schemas.lead import (
-    CampaignCreate,
-    Campaign,
-    CampaignResponse,
-    CampaignStatus,
-    CampaignMetrics
-)
-from app.models.lead import CampaignDB, CampaignEmailDB, LeadDB
-from app.services.lead_service import LeadService
+from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.agents.email_campaign_agent import EmailCampaignAgent
 from app.api.deps.auth_deps import get_current_user
+from app.core.config import get_settings
+from app.core.database import get_db
+from app.models.lead import CampaignDB, CampaignEmailDB, LeadDB
+from app.schemas.lead import (
+    Campaign,
+    CampaignCreate,
+    CampaignEmail,
+    CampaignEmailListResponse,
+    CampaignEmailUpdate,
+    CampaignMetrics,
+    CampaignResponse,
+    CampaignStatus,
+)
 from app.schemas.user import CurrentUser
-
+from app.services.campaign_service import (
+    campaign_db_to_schema,
+    campaign_email_db_to_schema,
+    resolve_recipient,
+    send_single_campaign_email,
+)
+from app.services.lead_service import LeadService
 router = APIRouter()
-
-# Initialize agent
 email_agent = EmailCampaignAgent()
+settings = get_settings()
 
 
 async def _get_owned_campaign(
@@ -50,15 +59,10 @@ async def create_campaign(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Create a new email campaign
-    
-    This generates personalized emails for each lead using AI.
-    """
+    """Create a campaign and AI-generate personalized emails for each lead."""
     try:
         logger.info(f"Creating campaign: {campaign_create.name}")
-        
-        # Validate leads exist and belong to the current user
+
         leads = []
         for lead_id in campaign_create.lead_ids:
             try:
@@ -74,128 +78,69 @@ async def create_campaign(
             db_lead = result.scalars().first()
             if db_lead:
                 leads.append(LeadService._db_lead_to_schema(db_lead))
-        
+
         if not leads:
             raise HTTPException(status_code=400, detail="No valid leads found")
-        
-        # Create campaign in database
+
+        template_dict = {
+            "subject_line": campaign_create.email_template.subject_line,
+            "body": campaign_create.email_template.body,
+        }
+
         db_campaign = CampaignDB(
             user_id=current_user.id,
             name=campaign_create.name,
             status=CampaignStatus.DRAFT,
-            email_template={
-                'subject_line': campaign_create.email_template.subject_line,
-                'body': campaign_create.email_template.body
-            },
+            campaign_goal=campaign_create.campaign_goal,
+            email_template=template_dict,
             send_from_email=campaign_create.send_from_email,
             send_from_name=campaign_create.send_from_name,
             follow_up_days=campaign_create.follow_up_days,
             scheduled_at=campaign_create.schedule_at,
-            total_leads=len(leads)
+            total_leads=len(leads),
         )
-        
+
         db.add(db_campaign)
         await db.commit()
         await db.refresh(db_campaign)
-        
-        # Generate personalized emails for each lead
-        logger.info(f"Generating personalized emails for {len(leads)} leads")
-        
-        campaign_goal = "Schedule a discovery call"
-        emails = await email_agent.batch_generate_campaign_emails(leads, campaign_goal)
-        
-        # Create campaign email records
+
+        emails = await email_agent.batch_generate_campaign_emails(
+            leads,
+            campaign_create.campaign_goal,
+            template_dict,
+        )
+
         for email_data in emails:
-            lead = next((l for l in leads if l.id == email_data['lead_id']), None)
+            lead = next((l for l in leads if l.id == email_data["lead_id"]), None)
             if not lead:
                 continue
-            
-            # Get primary contact email
-            recipient_email = None
-            recipient_name = None
-            
-            if lead.enrichment_data and lead.enrichment_data.decision_makers:
-                dm = lead.enrichment_data.decision_makers[0]
-                recipient_email = dm.email
-                recipient_name = dm.name
-            
-            # Generate tracking ID
+
+            recipient_email, recipient_name = resolve_recipient(lead)
             tracking_id = str(uuid.uuid4())
-            
+
             campaign_email = CampaignEmailDB(
                 campaign_id=db_campaign.id,
-                lead_id=email_data['lead_id'],
+                lead_id=email_data["lead_id"],
                 recipient_email=recipient_email or "unknown@example.com",
                 recipient_name=recipient_name,
-                subject=email_data['subject'],
-                body=email_data['body'],
-                tracking_id=tracking_id
+                subject=email_data["subject"],
+                body=email_data["body"],
+                tracking_id=tracking_id,
+                follow_up_number=0,
             )
-            
             db.add(campaign_email)
-        
+
         await db.commit()
-        
-        logger.info(f"Campaign '{campaign_create.name}' created successfully")
-        
-        # Convert to schema
-        campaign = Campaign(
-            id=db_campaign.id,
-            name=db_campaign.name,
-            status=db_campaign.status,
-            created_at=db_campaign.created_at,
-            scheduled_at=db_campaign.scheduled_at,
-            total_leads=db_campaign.total_leads,
-            emails_sent=db_campaign.emails_sent
-        )
-        
+
         return CampaignResponse(
-            campaign=campaign,
-            message=f"Campaign created with {len(emails)} personalized emails"
+            campaign=campaign_db_to_schema(db_campaign),
+            message=f"Campaign created with {len(emails)} personalized emails",
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error creating campaign: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/{campaign_id}", response_model=CampaignResponse)
-async def get_campaign(
-    campaign_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get campaign details and status
-    """
-    try:
-        campaign_uuid = uuid.UUID(campaign_id)
-        db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
-        
-        campaign = Campaign(
-            id=db_campaign.id,
-            name=db_campaign.name,
-            status=db_campaign.status,
-            created_at=db_campaign.created_at,
-            scheduled_at=db_campaign.scheduled_at,
-            started_at=db_campaign.started_at,
-            completed_at=db_campaign.completed_at,
-            total_leads=db_campaign.total_leads,
-            emails_sent=db_campaign.emails_sent,
-            emails_opened=db_campaign.emails_opened,
-            emails_clicked=db_campaign.emails_clicked,
-            emails_replied=db_campaign.emails_replied,
-            emails_bounced=db_campaign.emails_bounced
-        )
-        
-        return CampaignResponse(campaign=campaign)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting campaign {campaign_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -206,42 +151,136 @@ async def get_campaigns(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get list of all campaigns
-    """
-    try:
-        result = await db.execute(
-            select(CampaignDB)
-            .where(CampaignDB.user_id == current_user.id)
-            .offset(skip)
-            .limit(limit)
+    result = await db.execute(
+        select(CampaignDB)
+        .where(CampaignDB.user_id == current_user.id)
+        .order_by(CampaignDB.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return [campaign_db_to_schema(c) for c in result.scalars().all()]
+
+
+@router.get("/{campaign_id}", response_model=CampaignResponse)
+async def get_campaign(
+    campaign_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    campaign_uuid = uuid.UUID(campaign_id)
+    db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
+    return CampaignResponse(campaign=campaign_db_to_schema(db_campaign))
+
+
+@router.get("/{campaign_id}/emails", response_model=CampaignEmailListResponse)
+async def list_campaign_emails(
+    campaign_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    campaign_uuid = uuid.UUID(campaign_id)
+    await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    result = await db.execute(
+        select(CampaignEmailDB, LeadDB.company_name)
+        .join(LeadDB, CampaignEmailDB.lead_id == LeadDB.id)
+        .where(CampaignEmailDB.campaign_id == campaign_uuid)
+        .order_by(CampaignEmailDB.follow_up_number, LeadDB.company_name)
+    )
+    rows = result.all()
+    emails = [
+        campaign_email_db_to_schema(email, lead_name=name)
+        for email, name in rows
+    ]
+    return CampaignEmailListResponse(emails=emails, total=len(emails))
+
+
+@router.patch("/{campaign_id}/emails/{email_id}", response_model=CampaignEmail)
+async def update_campaign_email(
+    campaign_id: str,
+    email_id: str,
+    body: CampaignEmailUpdate,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    campaign_uuid = uuid.UUID(campaign_id)
+    email_uuid = uuid.UUID(email_id)
+    await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    result = await db.execute(
+        select(CampaignEmailDB).where(
+            CampaignEmailDB.id == email_uuid,
+            CampaignEmailDB.campaign_id == campaign_uuid,
         )
-        db_campaigns = result.scalars().all()
-        
-        campaigns = [
-            Campaign(
-                id=c.id,
-                name=c.name,
-                status=c.status,
-                created_at=c.created_at,
-                scheduled_at=c.scheduled_at,
-                started_at=c.started_at,
-                completed_at=c.completed_at,
-                total_leads=c.total_leads,
-                emails_sent=c.emails_sent,
-                emails_opened=c.emails_opened,
-                emails_clicked=c.emails_clicked,
-                emails_replied=c.emails_replied,
-                emails_bounced=c.emails_bounced
-            )
-            for c in db_campaigns
-        ]
-        
-        return campaigns
-        
-    except Exception as e:
-        logger.error(f"Error getting campaigns: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    )
+    email = result.scalars().first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    if email.sent_at:
+        raise HTTPException(status_code=400, detail="Cannot edit sent email")
+
+    if body.subject is not None:
+        email.subject = body.subject
+    if body.body is not None:
+        email.body = body.body
+    await db.commit()
+    await db.refresh(email)
+
+    lead_result = await db.execute(select(LeadDB).where(LeadDB.id == email.lead_id))
+    lead_name = lead_result.scalars().first()
+    return campaign_email_db_to_schema(
+        email, lead_name=lead_name.company_name if lead_name else None
+    )
+
+
+@router.post("/{campaign_id}/emails/{email_id}/regenerate", response_model=CampaignEmail)
+async def regenerate_campaign_email(
+    campaign_id: str,
+    email_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    campaign_uuid = uuid.UUID(campaign_id)
+    email_uuid = uuid.UUID(email_id)
+    db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    result = await db.execute(
+        select(CampaignEmailDB).where(
+            CampaignEmailDB.id == email_uuid,
+            CampaignEmailDB.campaign_id == campaign_uuid,
+        )
+    )
+    email = result.scalars().first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    if email.sent_at:
+        raise HTTPException(status_code=400, detail="Cannot regenerate sent email")
+
+    lead_result = await db.execute(select(LeadDB).where(LeadDB.id == email.lead_id))
+    db_lead = lead_result.scalars().first()
+    if not db_lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    lead = LeadService._db_lead_to_schema(db_lead)
+    template_dict = db_campaign.email_template or {}
+
+    content = await email_agent.generate_personalized_email(
+        lead,
+        db_campaign.campaign_goal or "Schedule a discovery call",
+        template_dict,
+    )
+    email.subject = content.get("subject", email.subject)
+    email.body = content.get("body", email.body)
+
+    recipient_email, recipient_name = resolve_recipient(lead)
+    if recipient_email:
+        email.recipient_email = recipient_email
+    if recipient_name:
+        email.recipient_name = recipient_name
+
+    await db.commit()
+    await db.refresh(email)
+    return campaign_email_db_to_schema(email, lead_name=db_lead.company_name)
 
 
 @router.post("/{campaign_id}/send")
@@ -250,67 +289,54 @@ async def send_campaign(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Launch an email campaign (send all emails)
-    
-    NOTE: This is a placeholder. In production, you'd integrate with
-    SendGrid, AWS SES, or another email service provider.
-    """
-    try:
-        campaign_uuid = uuid.UUID(campaign_id)
-        db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
-        
-        if db_campaign.status == CampaignStatus.RUNNING:
-            raise HTTPException(status_code=400, detail="Campaign already running")
-        
-        # Get campaign emails
-        result_emails = await db.execute(select(CampaignEmailDB).where(CampaignEmailDB.campaign_id == campaign_uuid))
-        campaign_emails = result_emails.scalars().all()
-        
-        if not campaign_emails:
-            raise HTTPException(status_code=400, detail="No emails in campaign")
-        
-        # Update campaign status
-        db_campaign.status = CampaignStatus.RUNNING
-        db_campaign.started_at = datetime.utcnow()
-        
-        # In production, you would:
-        # 1. Integrate with email service (SendGrid, AWS SES, etc.)
-        # 2. Send emails with tracking pixels
-        # 3. Handle bounces and errors
-        # 4. Schedule follow-ups
-        
-        # For now, simulate sending
-        sent_count = 0
-        for email in campaign_emails:
-            try:
-                # Simulate email send
-                logger.info(f"Sending email to {email.recipient_email}: {email.subject}")
-                
-                # In production, call email service API here
-                # await email_service.send_email(...)
-                
-                email.sent_at = datetime.utcnow()
-                sent_count += 1
-                
-            except Exception as e:
-                logger.error(f"Error sending email to {email.recipient_email}: {e}")
-                email.error_message = str(e)
-        
+    """Launch campaign — sends all unsent initial emails via SMTP when configured."""
+    campaign_uuid = uuid.UUID(campaign_id)
+    db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    if db_campaign.status == CampaignStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Campaign already running")
+
+    result_emails = await db.execute(
+        select(CampaignEmailDB).where(
+            CampaignEmailDB.campaign_id == campaign_uuid,
+            CampaignEmailDB.follow_up_number == 0,
+        )
+    )
+    campaign_emails = result_emails.scalars().all()
+
+    if not campaign_emails:
+        raise HTTPException(status_code=400, detail="No emails in campaign")
+
+    db_campaign.status = CampaignStatus.RUNNING
+    db_campaign.started_at = datetime.utcnow()
+
+    smtp_ready = bool(settings.smtp_username and settings.smtp_password)
+    sent_count = 0
+
+    for email in campaign_emails:
+        if email.sent_at:
+            sent_count += 1
+            continue
+        ok = await send_single_campaign_email(
+            db, db_campaign, email, simulate_only=not smtp_ready
+        )
+        if ok:
+            sent_count += 1
+
+    if sent_count >= len(campaign_emails):
         db_campaign.emails_sent = sent_count
-        
-        await db.commit()
-        
-        return {
-            "message": f"Campaign launched successfully. {sent_count} emails sent.",
-            "note": "This is a demo. Integrate with SendGrid or AWS SES for production."
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error sending campaign {campaign_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+    await db.commit()
+
+    note = (
+        "Emails sent via SMTP."
+        if smtp_ready
+        else "SMTP not configured — emails marked sent in demo mode. Set SMTP_* in .env for real delivery."
+    )
+    return {
+        "message": f"Campaign launched. {sent_count} emails sent.",
+        "note": note,
+    }
 
 
 @router.get("/{campaign_id}/metrics", response_model=CampaignMetrics)
@@ -319,43 +345,26 @@ async def get_campaign_metrics(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get campaign performance metrics
-    """
-    try:
-        campaign_uuid = uuid.UUID(campaign_id)
-        db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
-        
-        # Calculate rates
-        total_sent = db_campaign.emails_sent or 0
-        
-        if total_sent == 0:
-            raise HTTPException(status_code=400, detail="No emails sent yet")
-        
-        open_rate = (db_campaign.emails_opened / total_sent) * 100 if total_sent > 0 else 0
-        click_rate = (db_campaign.emails_clicked / total_sent) * 100 if total_sent > 0 else 0
-        response_rate = (db_campaign.emails_replied / total_sent) * 100 if total_sent > 0 else 0
-        bounce_rate = (db_campaign.emails_bounced / total_sent) * 100 if total_sent > 0 else 0
-        
-        # Conversion rate (responded + qualified)
-        conversion_rate = response_rate  # Simplified for now
-        
-        metrics = CampaignMetrics(
-            campaign_id=campaign_id,
-            open_rate=round(open_rate, 2),
-            click_rate=round(click_rate, 2),
-            response_rate=round(response_rate, 2),
-            bounce_rate=round(bounce_rate, 2),
-            conversion_rate=round(conversion_rate, 2)
-        )
-        
-        return metrics
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting metrics for campaign {campaign_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    campaign_uuid = uuid.UUID(campaign_id)
+    db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    total_sent = db_campaign.emails_sent or 0
+    if total_sent == 0:
+        raise HTTPException(status_code=400, detail="No emails sent yet")
+
+    open_rate = (db_campaign.emails_opened / total_sent) * 100
+    click_rate = (db_campaign.emails_clicked / total_sent) * 100
+    response_rate = (db_campaign.emails_replied / total_sent) * 100
+    bounce_rate = (db_campaign.emails_bounced / total_sent) * 100
+
+    return CampaignMetrics(
+        campaign_id=campaign_uuid,
+        open_rate=round(open_rate, 2),
+        click_rate=round(click_rate, 2),
+        response_rate=round(response_rate, 2),
+        bounce_rate=round(bounce_rate, 2),
+        conversion_rate=round(response_rate, 2),
+    )
 
 
 @router.post("/{campaign_id}/pause")
@@ -364,26 +373,15 @@ async def pause_campaign(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Pause a running campaign
-    """
-    try:
-        campaign_uuid = uuid.UUID(campaign_id)
-        db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
-        
-        if db_campaign.status != CampaignStatus.RUNNING:
-            raise HTTPException(status_code=400, detail="Campaign is not running")
-        
-        db_campaign.status = CampaignStatus.PAUSED
-        await db.commit()
-        
-        return {"message": "Campaign paused successfully"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error pausing campaign {campaign_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    campaign_uuid = uuid.UUID(campaign_id)
+    db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    if db_campaign.status != CampaignStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Campaign is not running")
+
+    db_campaign.status = CampaignStatus.PAUSED
+    await db.commit()
+    return {"message": "Campaign paused successfully"}
 
 
 @router.post("/{campaign_id}/resume")
@@ -392,24 +390,38 @@ async def resume_campaign(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Resume a paused campaign
-    """
-    try:
-        campaign_uuid = uuid.UUID(campaign_id)
-        db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
-        
-        if db_campaign.status != CampaignStatus.PAUSED:
-            raise HTTPException(status_code=400, detail="Campaign is not paused")
-        
-        db_campaign.status = CampaignStatus.RUNNING
-        await db.commit()
-        
-        return {"message": "Campaign resumed successfully"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error resuming campaign {campaign_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    campaign_uuid = uuid.UUID(campaign_id)
+    db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
 
+    if db_campaign.status != CampaignStatus.PAUSED:
+        raise HTTPException(status_code=400, detail="Campaign is not paused")
+
+    db_campaign.status = CampaignStatus.RUNNING
+    await db.commit()
+    return {"message": "Campaign resumed successfully"}
+
+
+@router.delete("/{campaign_id}")
+async def delete_campaign(
+    campaign_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a campaign and all its emails. Running campaigns must be paused first."""
+    campaign_uuid = uuid.UUID(campaign_id)
+    db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    if db_campaign.status == CampaignStatus.RUNNING:
+        raise HTTPException(
+            status_code=400,
+            detail="Pause the campaign before deleting",
+        )
+
+    await db.execute(
+        delete(CampaignEmailDB).where(CampaignEmailDB.campaign_id == campaign_uuid)
+    )
+    await db.delete(db_campaign)
+    await db.commit()
+
+    logger.info(f"Deleted campaign {campaign_id}")
+    return {"message": "Campaign deleted successfully"}

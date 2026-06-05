@@ -2,10 +2,25 @@
 Prompts for email campaign generation
 """
 
-def get_email_generation_prompt(lead_data: dict, campaign_goal: str) -> str:
+def get_email_generation_prompt(
+    lead_data: dict,
+    campaign_goal: str,
+    email_template: dict | None = None,
+) -> str:
     """Generate personalized email content from the available lead facts."""
 
+    template_section = ""
+    if email_template:
+        template_section = f"""
+USER EMAIL TEMPLATE (use as tone/structure guide; personalize with lead facts):
+Subject template: {email_template.get('subject_line', '')}
+Body template: {email_template.get('body', '')}
+
+Substitute placeholders like {{company_name}}, {{contact_name}}, {{industry}} with real values from LEAD INFORMATION.
+"""
+
     return f"""Write a highly personalized cold outreach email based on this lead.
+{template_section}
 
 The lead may be any type of business (startup, restaurant, manufacturer, retailer,
 agency, non-profit, etc.). Personalize using ONLY the facts below — do NOT invent
@@ -75,18 +90,29 @@ AVOID:
 - Multiple CTAs or questions
 - Jargon or buzzwords
 - Being too long (>200 words)
+- Markdown formatting (no **, #, bullets)
+- Multiple variations or A/B options
 
-Generate 2 variations (A/B test options) with different angles/approaches."""
+OUTPUT FORMAT — return exactly ONE email in plain text (no markdown):
+
+SUBJECT: <subject line under 60 characters>
+BODY:
+<email body, 3-4 short paragraphs, under 200 words>
+
+Do NOT include Variation A/B, multiple options, or explanatory notes. Only the subject and body above."""
 
 
 def get_follow_up_email_prompt(
     original_email: str,
     lead_data: dict,
     days_since_first: int,
-    follow_up_number: int
+    follow_up_number: int,
+    campaign_goal: str = "",
 ) -> str:
     """Generate follow-up email prompt"""
-    
+
+    goal_line = f"\nCAMPAIGN GOAL: {campaign_goal}\n" if campaign_goal else ""
+
     angles = {
         1: "Add additional value/insight",
         2: "Different pain point or use case",
@@ -96,7 +122,7 @@ def get_follow_up_email_prompt(
     angle = angles.get(follow_up_number, "Add value")
     
     return f"""Write a follow-up email (follow-up #{follow_up_number}, {days_since_first} days after first email):
-
+{goal_line}
 ORIGINAL EMAIL:
 {original_email}
 

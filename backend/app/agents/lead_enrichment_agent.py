@@ -205,7 +205,7 @@ class LeadEnrichmentAgent:
         for _ in range(3):
             try:
                 response = self.client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model="gemini-2.5-flash-lite",
                     contents=contents,
                     config=config,
                 )
@@ -309,7 +309,7 @@ class LeadEnrichmentAgent:
         contact = {
             "website": self._sanitize_text(payload.get("website")),
             "phone": self._sanitize_text(payload.get("phone")),
-            "email": self._sanitize_text(payload.get("email")),
+            "email": self._sanitize_email(payload.get("email")),
             "address": self._sanitize_text(payload.get("address")),
             "social_media": self._sanitize_dict(payload.get("social_media")),
         }
@@ -335,7 +335,7 @@ class LeadEnrichmentAgent:
             contact_data = {
                 "name": entry.get("name"),
                 "title": entry.get("title"),
-                "email": entry.get("email"),
+                "email": self._sanitize_email(entry.get("email")),
                 "linkedin_url": entry.get("linkedin_url"),
                 "phone": entry.get("phone"),
             }
@@ -356,6 +356,13 @@ class LeadEnrichmentAgent:
             text = str(value).strip()
             return text or None
         return None
+
+    @staticmethod
+    def _sanitize_email(value: Any) -> Optional[str]:
+        from app.utils.email_sanitize import extract_first_email
+
+        text = LeadEnrichmentAgent._sanitize_text(value)
+        return extract_first_email(text) if text else None
 
     @staticmethod
     def _sanitize_dict(value: Any) -> Optional[Dict[str, Any]]:

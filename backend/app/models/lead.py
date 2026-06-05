@@ -61,6 +61,7 @@ class LeadDB(Base):
     # Metadata
     notes = Column(Text)
     source_query = Column(Text)  # Original free-form user query
+    venture = Column(String, index=True)  # Business idea / project tag
 
     # Relationships
     campaign_emails = relationship("CampaignEmailDB", back_populates="lead")
@@ -77,6 +78,7 @@ class CampaignDB(Base):
     
     # Email Configuration
     email_template = Column(JSON)  # Subject and body template
+    campaign_goal = Column(Text)
     send_from_email = Column(String)
     send_from_name = Column(String)
     follow_up_days = Column(JSON)  # List of days for follow-ups
@@ -123,7 +125,10 @@ class CampaignEmailDB(Base):
     # Tracking
     tracking_id = Column(String, unique=True)
     error_message = Column(Text)
-    
+    follow_up_number = Column(Integer, default=0)
+    parent_email_id = Column(UUID(as_uuid=True), ForeignKey("campaign_emails.id"), nullable=True)
+    scheduled_for = Column(DateTime)
+
     # Relationships
     campaign = relationship("CampaignDB", back_populates="campaign_emails")
     lead = relationship("LeadDB", back_populates="campaign_emails")

@@ -60,6 +60,11 @@ class LeadDiscoveryRequest(BaseModel):
         ),
     )
     max_results: int = Field(default=50, ge=1, le=200, description="Maximum number of leads to return")
+    venture: Optional[str] = Field(
+        None,
+        max_length=120,
+        description="Tag grouping leads by business idea / startup venture",
+    )
 
     class Config:
         json_schema_extra = {
@@ -89,9 +94,9 @@ class CompanyInfo(BaseModel):
     industry: Optional[str] = None
     employee_count: Optional[int] = None
 
-    # Company contact
+    # Company contact (str not EmailStr — AI-sourced values may be messy until manually fixed)
     phone: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     address: Optional[str] = None
     location: Optional[str] = None
     city: Optional[str] = None
@@ -110,7 +115,7 @@ class ContactInfo(BaseModel):
     """Contact information for decision makers"""
     name: Optional[str] = None
     title: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     linkedin_url: Optional[HttpUrl] = None
     phone: Optional[str] = None
 
@@ -120,6 +125,26 @@ class LeadEnrichmentData(BaseModel):
     decision_makers: Optional[List[ContactInfo]] = None
     social_media: Optional[Dict[str, str]] = None
     additional_data: Optional[Dict[str, Any]] = None
+
+
+class ContactInfoUpdate(BaseModel):
+    """Editable decision-maker fields (relaxed validation for manual entry)."""
+    name: Optional[str] = None
+    title: Optional[str] = None
+    email: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class LeadContactUpdate(BaseModel):
+    """Manual update of company contact and enrichment data."""
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    notes: Optional[str] = None
+    decision_makers: Optional[List[ContactInfoUpdate]] = None
 
 
 class Lead(BaseModel):
@@ -132,6 +157,8 @@ class Lead(BaseModel):
     enriched_at: Optional[datetime] = None
     last_contacted_at: Optional[datetime] = None
     notes: Optional[str] = None
+    venture: Optional[str] = None
+    source_query: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -181,6 +208,12 @@ class CampaignCreate(BaseModel):
     name: str
     lead_ids: List[uuid.UUID]
     email_template: EmailTemplate
+    campaign_goal: str = Field(
+        ...,
+        min_length=10,
+        max_length=2000,
+        description="What you want to achieve with this outreach",
+    )
     schedule_at: Optional[datetime] = None
     send_from_email: EmailStr
     send_from_name: str
@@ -203,14 +236,18 @@ class CampaignCreate(BaseModel):
 
 class Campaign(BaseModel):
     """Email campaign"""
-    id: Optional[int] = None
+    id: Optional[uuid.UUID] = None
     name: str
     status: CampaignStatus = CampaignStatus.DRAFT
+    campaign_goal: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     scheduled_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    
+    send_from_email: Optional[str] = None
+    send_from_name: Optional[str] = None
+    follow_up_days: Optional[List[int]] = None
+
     # Stats
     total_leads: int = 0
     emails_sent: int = 0
@@ -218,9 +255,41 @@ class Campaign(BaseModel):
     emails_clicked: int = 0
     emails_replied: int = 0
     emails_bounced: int = 0
-    
+
     class Config:
         from_attributes = True
+
+
+class CampaignEmail(BaseModel):
+    """Individual email in a campaign"""
+    id: uuid.UUID
+    campaign_id: uuid.UUID
+    lead_id: uuid.UUID
+    lead_name: Optional[str] = None
+    recipient_email: str
+    recipient_name: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    sent_at: Optional[datetime] = None
+    opened_at: Optional[datetime] = None
+    clicked_at: Optional[datetime] = None
+    replied_at: Optional[datetime] = None
+    bounced_at: Optional[datetime] = None
+    follow_up_number: int = 0
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CampaignEmailUpdate(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+
+class CampaignEmailListResponse(BaseModel):
+    emails: List[CampaignEmail]
+    total: int
 
 
 class CampaignResponse(BaseModel):
@@ -231,7 +300,7 @@ class CampaignResponse(BaseModel):
 
 class CampaignMetrics(BaseModel):
     """Campaign performance metrics"""
-    campaign_id: int
+    campaign_id: uuid.UUID
     open_rate: float = Field(description="Percentage of emails opened")
     click_rate: float = Field(description="Percentage of emails clicked")
     response_rate: float = Field(description="Percentage of emails replied")

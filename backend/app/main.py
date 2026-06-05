@@ -10,7 +10,7 @@ from loguru import logger
 
 from app.core.lifespan import lifespan
 from app.core.config import get_settings
-from app.api import leads, campaigns, auth, enums, dashboard
+from app.api import leads, campaigns, auth, enums, dashboard, tracking
 
 # Configure logger
 logger.remove()
@@ -80,6 +80,7 @@ app.include_router(campaigns.router, tags=['Campaigns'], prefix='/api/v1/campaig
 app.include_router(enums.router, tags=['Enums'], prefix='/api/v1/enums')
 app.include_router(leads.router, tags=['Leads'], prefix='/api/v1/leads')
 app.include_router(dashboard.router, tags=['Dashboard'], prefix='/api/v1/dashboard')
+app.include_router(tracking.router, tags=['Tracking'], prefix='/track')
 
 
 @app.get("/")

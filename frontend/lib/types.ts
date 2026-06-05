@@ -50,6 +50,16 @@ export interface LeadEnrichmentData {
   additional_data?: Record<string, unknown>;
 }
 
+export interface LeadContactUpdate {
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  country?: string;
+  notes?: string;
+  decision_makers?: ContactInfo[];
+}
+
 export interface Lead {
   id?: string;
   company_info: CompanyInfo;
@@ -59,6 +69,91 @@ export interface Lead {
   enriched_at?: string;
   last_contacted_at?: string;
   notes?: string;
+  venture?: string;
+  source_query?: string;
+}
+
+export type CampaignStatus =
+  | "draft"
+  | "scheduled"
+  | "running"
+  | "paused"
+  | "completed"
+  | "cancelled";
+
+export interface EmailTemplate {
+  subject_line: string;
+  body: string;
+}
+
+export interface Campaign {
+  id?: string;
+  name: string;
+  status: CampaignStatus;
+  campaign_goal?: string;
+  created_at: string;
+  scheduled_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  send_from_email?: string;
+  send_from_name?: string;
+  follow_up_days?: number[];
+  total_leads: number;
+  emails_sent: number;
+  emails_opened: number;
+  emails_clicked: number;
+  emails_replied: number;
+  emails_bounced: number;
+}
+
+export interface CampaignEmail {
+  id: string;
+  campaign_id: string;
+  lead_id: string;
+  lead_name?: string;
+  recipient_email: string;
+  recipient_name?: string;
+  subject?: string;
+  body?: string;
+  sent_at?: string;
+  opened_at?: string;
+  clicked_at?: string;
+  follow_up_number: number;
+  error_message?: string;
+}
+
+export interface CampaignCreatePayload {
+  name: string;
+  lead_ids: string[];
+  campaign_goal: string;
+  email_template: EmailTemplate;
+  send_from_email: string;
+  send_from_name: string;
+  follow_up_days?: number[];
+}
+
+export interface CampaignMetrics {
+  campaign_id: string;
+  open_rate: number;
+  click_rate: number;
+  response_rate: number;
+  bounce_rate: number;
+  conversion_rate: number;
+}
+
+export interface VentureCount {
+  venture: string;
+  count: number;
+}
+
+export interface LeadCampaignHistory {
+  campaign_id: string;
+  campaign_name: string;
+  campaign_status: string;
+  email_id: string;
+  subject?: string;
+  sent_at?: string;
+  follow_up_number: number;
 }
 
 export interface LeadListResponse {

@@ -3,6 +3,7 @@ API endpoints for lead management
 """
 import asyncio
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -19,6 +20,7 @@ from app.schemas.lead import (
     LeadStatus,
     LeadEnvelope,
     LeadListEnvelope,
+    LeadContactUpdate,
 )
 from app.schemas.user import CurrentUser
 from app.api.deps.auth_deps import get_current_user
@@ -28,6 +30,7 @@ from app.agents.lead_discovery_agent import LeadDiscoveryAgent
 from app.agents.lead_enrichment_agent import LeadEnrichmentAgent
 from app.messages.leads import InfoMessage, ErrorMessage
 from app.models.lead import LeadDB
+from app.services.campaign_service import get_lead_campaign_history
 
 router = APIRouter()
 
@@ -79,7 +82,13 @@ async def discover_leads(
             request.max_results,
         )
 
-        db_leads = await LeadService.bulk_create_leads(db, discovered_leads, user_id=current_user.id)
+        db_leads = await LeadService.bulk_create_leads(
+            db,
+            discovered_leads,
+            user_id=current_user.id,
+            source_query=request.query,
+            venture=request.venture,
+        )
 
         leads = [LeadService._db_lead_to_schema(db_lead) for db_lead in db_leads]
 
@@ -106,6 +115,7 @@ async def get_leads(
     skip: int = 0,
     limit: int = 50,
     status: Optional[LeadStatus] = None,
+    venture: Optional[str] = None,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -120,6 +130,8 @@ async def get_leads(
         )
         if status:
             query = query.where(LeadDB.status == status)
+        if venture:
+            query = query.where(LeadDB.venture == venture)
         query = query.offset(skip).limit(limit)
         result = await db.execute(query)
         db_rows = result.scalars().all()
@@ -129,6 +141,8 @@ async def get_leads(
         count_q = select(func.count()).select_from(LeadDB).where(LeadDB.user_id == current_user.id)
         if status:
             count_q = count_q.where(LeadDB.status == status)
+        if venture:
+            count_q = count_q.where(LeadDB.venture == venture)
         total = (await db.execute(count_q)).scalar_one()
         
         return {
@@ -145,6 +159,38 @@ async def get_leads(
     except Exception as e:
         logger.error(f"Error getting leads: {e}")
         raise HTTPException(status_code=500, detail=ErrorMessage.server_error)
+
+
+@router.get("/ventures")
+async def list_ventures(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Distinct venture tags for the current user's leads."""
+    result = await db.execute(
+        select(LeadDB.venture, func.count())
+        .where(LeadDB.user_id == current_user.id, LeadDB.venture.isnot(None))
+        .group_by(LeadDB.venture)
+        .order_by(LeadDB.venture)
+    )
+    return [{"venture": row[0], "count": row[1]} for row in result.all()]
+
+
+@router.get("/{lead_id}/campaigns")
+async def get_lead_campaigns(
+    lead_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    lead_uuid = uuid.UUID(lead_id)
+    result = await db.execute(
+        select(LeadDB).where(LeadDB.id == lead_uuid, LeadDB.user_id == current_user.id)
+    )
+    if not result.scalars().first():
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    history = await get_lead_campaign_history(db, lead_uuid, current_user.id)
+    return {"success": True, "data": history}
 
 
 @router.get("/{lead_id}", response_model=LeadEnvelope)
@@ -296,6 +342,71 @@ async def batch_enrich_leads(
         raise HTTPException(status_code=500, detail=ErrorMessage.server_error)
 
 
+@router.patch("/{lead_id}", response_model=LeadEnvelope)
+async def patch_lead_contacts(
+    lead_id: str,
+    body: LeadContactUpdate,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually update company contact info and decision makers after enrichment."""
+    try:
+        lead_uuid = uuid.UUID(lead_id)
+        result = await db.execute(select(LeadDB).where(LeadDB.id == lead_uuid))
+        db_lead = result.scalars().first()
+        _ensure_lead_owner(db_lead, current_user.id)
+
+        if body.email is not None:
+            db_lead.email = body.email or None
+        if body.phone is not None:
+            db_lead.phone = body.phone or None
+        if body.address is not None:
+            db_lead.address = body.address or None
+        if body.city is not None:
+            db_lead.city = body.city or None
+        if body.country is not None:
+            db_lead.country = body.country or None
+        if body.notes is not None:
+            db_lead.notes = body.notes or None
+
+        if body.decision_makers is not None:
+            db_lead.decision_makers = [
+                {
+                    "name": dm.name or None,
+                    "title": dm.title or None,
+                    "email": dm.email or None,
+                    "linkedin_url": dm.linkedin_url or None,
+                    "phone": dm.phone or None,
+                }
+                for dm in body.decision_makers
+                if any([dm.name, dm.title, dm.email, dm.linkedin_url, dm.phone])
+            ]
+
+        has_contacts = bool(
+            db_lead.email
+            or db_lead.phone
+            or (db_lead.decision_makers and len(db_lead.decision_makers) > 0)
+        )
+        if has_contacts:
+            db_lead.enriched_at = db_lead.enriched_at or datetime.utcnow()
+            if db_lead.status in (LeadStatus.DISCOVERED, LeadStatus.ENRICHING):
+                db_lead.status = LeadStatus.ENRICHED
+
+        await db.commit()
+        await db.refresh(db_lead)
+
+        return {
+            "success": True,
+            "message": InfoMessage.lead_updated,
+            "data": {"lead": LeadService._db_lead_to_schema(db_lead)},
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error patching lead contacts {lead_id}: {e}")
+        raise HTTPException(status_code=500, detail=ErrorMessage.server_error)
+
+
 @router.put("/{lead_id}", response_model=LeadEnvelope)
 async def update_lead(
     lead_id: str,
@@ -334,7 +445,7 @@ async def update_lead(
         if lead.enrichment_data:
             db_lead.social_media = lead.enrichment_data.social_media
             db_lead.additional_data = lead.enrichment_data.additional_data
-            if lead.enrichment_data.decision_makers:
+            if lead.enrichment_data.decision_makers is not None:
                 db_lead.decision_makers = [
                     {
                         "name": dm.name,
@@ -343,8 +454,9 @@ async def update_lead(
                         "linkedin_url": str(dm.linkedin_url) if dm.linkedin_url else None,
                         "phone": dm.phone,
                     }
-                    for dm in (lead.enrichment_data.decision_makers or [])
+                    for dm in lead.enrichment_data.decision_makers
                 ]
+                db_lead.enriched_at = db_lead.enriched_at or datetime.utcnow()
         await db.commit()
         await db.refresh(db_lead)
         updated_lead = LeadService._db_lead_to_schema(db_lead)

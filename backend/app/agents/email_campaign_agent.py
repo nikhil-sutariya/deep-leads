@@ -26,9 +26,10 @@ class EmailCampaignAgent:
         self.client = genai.Client(api_key=self.settings.google_api_key)
     
     async def generate_personalized_email(
-        self, 
-        lead: Lead, 
-        campaign_goal: str = "Schedule discovery call"
+        self,
+        lead: Lead,
+        campaign_goal: str = "Schedule discovery call",
+        email_template: Optional[Dict] = None,
     ) -> Dict[str, str]:
         """
         Generate a highly personalized email for a specific lead
@@ -47,7 +48,7 @@ class EmailCampaignAgent:
             lead_data = self._prepare_lead_data(lead)
             
             # Generate email content
-            prompt = get_email_generation_prompt(lead_data, campaign_goal)
+            prompt = get_email_generation_prompt(lead_data, campaign_goal, email_template)
             response = await self._call_gemini_async(prompt)
             
             # Parse response into subject and body
@@ -57,7 +58,7 @@ class EmailCampaignAgent:
             if not self._validate_email_quality(email_content, lead):
                 logger.warning(f"Email quality check failed for {lead.company_info.name}, regenerating...")
                 # Try one more time with more specific guidance
-                email_content = await self._regenerate_email(lead, campaign_goal, response)
+                email_content = await self._regenerate_email(lead, campaign_goal, response, email_template)
             
             logger.info(f"Generated email for {lead.company_info.name}")
             return email_content
@@ -72,7 +73,8 @@ class EmailCampaignAgent:
         lead: Lead,
         original_email: str,
         follow_up_number: int,
-        days_since_first: int
+        days_since_first: int,
+        campaign_goal: str = "",
     ) -> Dict[str, str]:
         """
         Generate a follow-up email
@@ -95,7 +97,8 @@ class EmailCampaignAgent:
                 original_email=original_email,
                 lead_data=lead_data,
                 days_since_first=days_since_first,
-                follow_up_number=follow_up_number
+                follow_up_number=follow_up_number,
+                campaign_goal=campaign_goal,
             )
             
             response = await self._call_gemini_async(prompt)
@@ -144,7 +147,8 @@ class EmailCampaignAgent:
     async def batch_generate_campaign_emails(
         self,
         leads: List[Lead],
-        campaign_goal: str = "Schedule discovery call"
+        campaign_goal: str = "Schedule discovery call",
+        email_template: Optional[Dict] = None,
     ) -> List[Dict]:
         """
         Generate personalized emails for multiple leads
@@ -168,7 +172,7 @@ class EmailCampaignAgent:
             batch = leads[i:i+batch_size]
             
             tasks = [
-                self.generate_personalized_email(lead, campaign_goal) 
+                self.generate_personalized_email(lead, campaign_goal, email_template)
                 for lead in batch
             ]
             
@@ -226,76 +230,120 @@ class EmailCampaignAgent:
         )
         
         response = self.client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash-lite",
             contents=prompt,
             config=config
         )
         
         return response.text
     
-    def _parse_email_response(self, response: str) -> Dict[str, str]:
-        """Parse email content from response"""
-        
-        email_content = {}
-        
-        # Try to extract subject line
-        subject_patterns = [
-            r'Subject(?:\s+Line)?[:\s]+(.+?)(?:\n|$)',
-            r'SUBJECT[:\s]+(.+?)(?:\n|$)',
-            r'\*\*Subject\*\*[:\s]+(.+?)(?:\n|$)'
+    def _extract_first_variation(self, text: str) -> str:
+        """If the model returned A/B variations, keep only the first."""
+        split_patterns = [
+            r"\n\s*(?:#{1,3}\s*)?(?:\*\*)?(?:Variation|Version|Option)\s*B(?:\*\*)?\b",
+            r"\n\s*---\s*\n",
+            r"\n\s*={3,}\s*\n",
         ]
-        
+        result = text
+        for pattern in split_patterns:
+            parts = re.split(pattern, result, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) > 1:
+                result = parts[0]
+                break
+        return result
+
+    def _strip_markdown(self, text: str) -> str:
+        """Convert markdown-ish AI output to plain text suitable for sending."""
+        if not text:
+            return text
+        text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+        text = re.sub(r"\*([^*]+)\*", r"\1", text)
+        text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+        text = re.sub(
+            r"^(?:\*\*)?(?:Variation|Version|Option)\s*A(?:\*\*)?[:\s]*\n?",
+            "",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        text = re.sub(r"^[-*]\s+", "", text, flags=re.MULTILINE)
+        return text.strip()
+
+    def _finalize_email_content(self, email_content: Dict[str, str]) -> Dict[str, str]:
+        """Clean subject/body for storage and SMTP send."""
+        subject = self._strip_markdown(email_content.get("subject", ""))
+        body = self._strip_markdown(email_content.get("body", ""))
+        subject = subject.strip('"').strip("'")
+        return {"subject": subject, "body": body}
+
+    def _parse_email_response(self, response: str) -> Dict[str, str]:
+        """Parse email content from response — one variation only, plain text."""
+        response = self._extract_first_variation(response)
+        email_content: Dict[str, str] = {}
+
+        subject_patterns = [
+            r"Subject(?:\s+Line)?[:\s]+(.+?)(?:\n|$)",
+            r"SUBJECT[:\s]+(.+?)(?:\n|$)",
+            r"\*\*Subject\*\*[:\s]+(.+?)(?:\n|$)",
+        ]
+
         for pattern in subject_patterns:
             match = re.search(pattern, response, re.IGNORECASE)
             if match:
-                email_content['subject'] = match.group(1).strip().strip('"').strip("'")
+                email_content["subject"] = match.group(1).strip()
                 break
-        
-        # Try to extract body
+
         body_patterns = [
-            r'Body[:\s]+(.*?)(?:\n\n---|\n\nVariation|$)',
-            r'BODY[:\s]+(.*?)(?:\n\n---|\n\nVariation|$)',
-            r'\*\*Body\*\*[:\s]+(.*?)(?:\n\n---|\n\nVariation|$)'
+            r"Body[:\s]+\n?(.*?)(?:\n\n(?:Variation|Version|Option)\s*B|\Z)",
+            r"BODY[:\s]+\n?(.*?)(?:\n\n(?:Variation|Version|Option)\s*B|\Z)",
+            r"\*\*Body\*\*[:\s]+\n?(.*?)(?:\n\n(?:Variation|Version|Option)\s*B|\Z)",
         ]
-        
+
         for pattern in body_patterns:
             match = re.search(pattern, response, re.IGNORECASE | re.DOTALL)
             if match:
-                email_content['body'] = match.group(1).strip()
+                email_content["body"] = match.group(1).strip()
                 break
-        
-        # If structured parsing failed, try to intelligently split
-        if not email_content.get('subject') or not email_content.get('body'):
+
+        if not email_content.get("subject") or not email_content.get("body"):
             email_content = self._fallback_parse_email(response)
-        
-        return email_content
+
+        return self._finalize_email_content(email_content)
     
     def _fallback_parse_email(self, response: str) -> Dict[str, str]:
-        """Fallback parsing if structured extraction fails"""
-        
-        lines = response.strip().split('\n')
-        
-        # First non-empty line is likely subject
+        """Fallback parsing if structured extraction fails."""
+        response = self._extract_first_variation(response)
+        lines = response.strip().split("\n")
+
         subject = None
         body_start = 0
-        
+
         for i, line in enumerate(lines):
-            if line.strip() and not subject:
-                subject = line.strip().strip('"').strip("'")
-                subject = re.sub(r'^Subject[:\s]+', '', subject, flags=re.IGNORECASE)
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if re.match(r"^(?:Subject|SUBJECT)[:\s]", stripped, re.IGNORECASE):
+                subject = re.sub(r"^(?:Subject|SUBJECT)[:\s]+", "", stripped, flags=re.IGNORECASE)
                 body_start = i + 1
                 break
-        
-        # Rest is body
-        body_lines = [l for l in lines[body_start:] if l.strip()]
-        body = '\n\n'.join(body_lines)
-        
-        # Clean up body
-        body = re.sub(r'^Body[:\s]+', '', body, flags=re.IGNORECASE)
-        
+            if not subject and not re.match(
+                r"^(?:Body|BODY|Variation|Version|Option)\b", stripped, re.IGNORECASE
+            ):
+                subject = stripped.strip('"').strip("'")
+                body_start = i + 1
+                break
+
+        body_lines = []
+        for line in lines[body_start:]:
+            if re.match(r"^Body[:\s]*$", line.strip(), re.IGNORECASE):
+                continue
+            body_lines.append(line)
+
+        body = "\n".join(body_lines).strip()
+        body = re.sub(r"^Body[:\s]+\n?", "", body, flags=re.IGNORECASE)
+
         return {
-            'subject': subject or 'Regarding your automation needs',
-            'body': body or 'I wanted to reach out regarding your company.'
+            "subject": subject or "Regarding your automation needs",
+            "body": body or "I wanted to reach out regarding your company.",
         }
     
     def _parse_subject_variants(self, response: str) -> List[Dict[str, str]]:
@@ -376,13 +424,14 @@ class EmailCampaignAgent:
         self,
         lead: Lead,
         campaign_goal: str,
-        previous_attempt: str
+        previous_attempt: str,
+        email_template: Optional[Dict] = None,
     ) -> Dict[str, str]:
         """Regenerate email with more specific guidance"""
-        
+
         lead_data = self._prepare_lead_data(lead)
-        
-        improved_prompt = get_email_generation_prompt(lead_data, campaign_goal)
+
+        improved_prompt = get_email_generation_prompt(lead_data, campaign_goal, email_template)
         improved_prompt += f"\n\nPREVIOUS ATTEMPT (had issues):\n{previous_attempt}\n\n"
         improved_prompt += "IMPROVEMENTS NEEDED: Be more specific, mention company name, add clear CTA, keep it under 200 words."
         

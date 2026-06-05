@@ -9,6 +9,7 @@ from datetime import datetime
 from loguru import logger
 
 from app.models.lead import LeadDB
+from app.utils.email_sanitize import extract_first_email
 from app.schemas.lead import (
     Lead, LeadStatus,
     CompanyInfo, LeadEnrichmentData, ContactInfo
@@ -19,7 +20,13 @@ class LeadService:
     """Service for managing leads"""
     
     @staticmethod
-    async def create_lead(db: Session, lead: Lead, user_id: Optional[uuid.UUID] = None) -> LeadDB:
+    async def create_lead(
+        db: Session,
+        lead: Lead,
+        user_id: Optional[uuid.UUID] = None,
+        source_query: Optional[str] = None,
+        venture: Optional[str] = None,
+    ) -> LeadDB:
         """Create a new lead in database"""
         
         db_lead = LeadDB(
@@ -42,6 +49,8 @@ class LeadService:
             status=lead.status,
             discovered_at=lead.discovered_at,
             notes=lead.notes,
+            source_query=source_query or getattr(lead, "source_query", None),
+            venture=venture or getattr(lead, "venture", None),
         )
 
         if lead.enrichment_data:
@@ -202,13 +211,21 @@ class LeadService:
         db_lead.status = LeadStatus.ENRICHED
 
     @staticmethod
-    async def bulk_create_leads(db: Session, leads: List[Lead], user_id: Optional[uuid.UUID] = None) -> List[LeadDB]:
+    async def bulk_create_leads(
+        db: Session,
+        leads: List[Lead],
+        user_id: Optional[uuid.UUID] = None,
+        source_query: Optional[str] = None,
+        venture: Optional[str] = None,
+    ) -> List[LeadDB]:
         """Bulk create leads"""
-        
+
         db_leads = []
         for lead in leads:
             try:
-                db_lead = await LeadService.create_lead(db, lead, user_id=user_id)
+                db_lead = await LeadService.create_lead(
+                    db, lead, user_id=user_id, source_query=source_query, venture=venture
+                )
                 db_leads.append(db_lead)
             except Exception as e:
                 logger.error(f"Error creating lead {lead.company_info.name}: {e}")
@@ -238,21 +255,21 @@ class LeadService:
             tech_stack=db_lead.tech_stack,
         )
 
-        enrichment_data = None
-        if db_lead.enriched_at:
-            decision_makers = None
-            if db_lead.decision_makers:
-                decision_makers = [
-                    ContactInfo(
-                        name=dm.get('name'),
-                        title=dm.get('title'),
-                        email=dm.get('email'),
-                        linkedin_url=dm.get('linkedin_url'),
-                        phone=dm.get('phone'),
-                    )
-                    for dm in db_lead.decision_makers
-                ]
+        decision_makers = None
+        if db_lead.decision_makers:
+            decision_makers = [
+                ContactInfo(
+                    name=dm.get("name"),
+                    title=dm.get("title"),
+                    email=extract_first_email(dm.get("email")),
+                    linkedin_url=dm.get("linkedin_url"),
+                    phone=dm.get("phone"),
+                )
+                for dm in db_lead.decision_makers
+            ]
 
+        enrichment_data = None
+        if decision_makers or db_lead.social_media or db_lead.additional_data:
             enrichment_data = LeadEnrichmentData(
                 decision_makers=decision_makers,
                 social_media=db_lead.social_media,
@@ -268,5 +285,7 @@ class LeadService:
             enriched_at=db_lead.enriched_at,
             last_contacted_at=db_lead.last_contacted_at,
             notes=db_lead.notes,
+            venture=db_lead.venture,
+            source_query=db_lead.source_query,
         )
 

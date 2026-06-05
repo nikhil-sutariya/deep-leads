@@ -1,0 +1,27 @@
+I am building one api platform for detecting the garage door boundary of a given image, and return the JSON with the boundary box and the image url of detected image by drawing the boundary in the door. Now this api will help the companies which are providing the garage door services but they have their website and to attract the customers and finding leads they have one feautre to visualize your garage door by uploading the image of your garage door and then it will give you bunch of different designs and color cominations along with multiple type of patterns and hardware design to simulate it and feel how my garage door will look like with the selected design or user can customize the design by selecting the elements (color, pattern, design, hardware etc.).
+
+So they require the imagee detection process and I already build the api client on it. Now I have to find the compnaies which are working in this domain and they have this feature (customer can design the door) or they are planning to implement this type of feature, so find these companies from the USA.
+
+Campaign details
+
+Campaign goal-
+Introduce our garage door boundary-detection API to US garage door companies that offer (or are building) a "visualize your door" feature where customers upload a garage photo and preview designs/colors/hardware. Goal: book a 15-minute technical demo to show how our API auto-detects the door region and returns a JSON bounding box + annotated image URL, so they can plug it into their configurator faster than building detection in-house.
+
+
+Subject
+Faster door detection for {company_name}'s visualizer
+
+Body
+Hi {contact_name},
+
+I came across {company_name} and your garage door design/visualization experience for customers in {industry}.
+
+We built an API that detects the garage door boundary from a customer-uploaded photo and returns a JSON bounding box plus an annotated image URL — so your configurator can overlay designs without manual masking.
+
+Would you be open to a 15-minute call next week to see if this fits your stack?
+
+For quick details review our website - https://ndetex.vercel.app/
+
+Best,
+Nikhil Sutariya | Co-Founder NDetex
+https://ndetex.vercel.app/

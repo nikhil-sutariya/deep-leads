@@ -5,6 +5,7 @@ from app.core.database import AsyncSessionLocal, engine
 from app.models.user import User
 from app.core.security import get_password_hash
 from app.core.config import get_settings
+from app.services.follow_up_scheduler import start_follow_up_scheduler, stop_follow_up_scheduler
 from sqlalchemy import text, select
 
 
@@ -53,7 +54,10 @@ async def lifespan(app):
     except Exception as e:
         logger.warning(f"Could not seed default user: {e}")
 
+    start_follow_up_scheduler()
+
     yield
 
+    stop_follow_up_scheduler()
     await engine.dispose()
     logger.info("Database connections closed")

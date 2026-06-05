@@ -14,18 +14,23 @@ export default function LeadsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<LeadStatus | "">("");
+  const [ventureFilter, setVentureFilter] = useState("");
+  const [ventures, setVentures] = useState<{ venture: string; count: number }[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [showDiscover, setShowDiscover] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoverMsg, setDiscoverMsg] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
-  const fetchLeads = useCallback(async (p: number, status: LeadStatus | "") => {
+  const fetchLeads = useCallback(async (p: number, status: LeadStatus | "", venture: string) => {
     setLoading(true);
     try {
       const skip = (p - 1) * PAGE_SIZE;
       const params: Record<string, unknown> = { skip, limit: PAGE_SIZE };
       if (status) params.status = status;
+      if (venture) params.venture = venture;
       const res = await api.get<ApiEnvelope<LeadListResponse>>("/leads", { params });
       setLeads(res.data.data.leads);
       setTotal(res.data.data.total);
@@ -36,9 +41,37 @@ export default function LeadsPage() {
     }
   }, []);
 
+  const pageLeadIds = leads.map((l) => l.id).filter((id): id is string => !!id);
+  const allPageSelected =
+    pageLeadIds.length > 0 && pageLeadIds.every((id) => selectedIds.has(id));
+  const somePageSelected =
+    pageLeadIds.some((id) => selectedIds.has(id)) && !allPageSelected;
+
+  function toggleSelectAllPage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) {
+        pageLeadIds.forEach((id) => next.delete(id));
+      } else {
+        pageLeadIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  }
+
   useEffect(() => {
-    fetchLeads(page, statusFilter);
-  }, [page, statusFilter, fetchLeads]);
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = somePageSelected;
+    }
+  }, [somePageSelected]);
+
+  useEffect(() => {
+    api.get<{ venture: string; count: number }[]>("/leads/ventures").then((res) => setVentures(res.data)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchLeads(page, statusFilter, ventureFilter);
+  }, [page, statusFilter, ventureFilter, fetchLeads]);
 
   // WebSocket for discovery notifications
   useEffect(() => {
@@ -56,7 +89,7 @@ export default function LeadsPage() {
               setDiscoverMsg(data.message);
               // Refresh leads list when discovery completes
               if (data.message.toLowerCase().includes("discover") || data.message.toLowerCase().includes("found")) {
-                fetchLeads(1, statusFilter);
+                fetchLeads(1, statusFilter, ventureFilter);
                 setPage(1);
               }
             }
@@ -72,21 +105,23 @@ export default function LeadsPage() {
     return () => {
       ws?.close();
     };
-  }, [fetchLeads, statusFilter]);
+  }, [fetchLeads, statusFilter, ventureFilter]);
 
-  async function handleDiscover(query: string, maxResults: number) {
+  async function handleDiscover(query: string, maxResults: number, venture?: string) {
     setDiscovering(true);
     setDiscoverMsg("Searching for leads…");
     try {
       const res = await api.post<ApiEnvelope<LeadListResponse>>("/leads/discover", {
         query,
         max_results: maxResults,
+        venture: venture || undefined,
       });
       const found = res.data.data.leads.length;
       setDiscoverMsg(`Found ${found} leads`);
       setShowDiscover(false);
-      fetchLeads(1, statusFilter);
+      fetchLeads(1, statusFilter, ventureFilter);
       setPage(1);
+      api.get<{ venture: string; count: number }[]>("/leads/ventures").then((r) => setVentures(r.data)).catch(() => {});
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -109,7 +144,7 @@ export default function LeadsPage() {
         </div>
         <button
           onClick={() => { setDiscoverMsg(""); setShowDiscover(true); }}
-          className="flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition"
+          className="cursor-pointer flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
@@ -120,14 +155,14 @@ export default function LeadsPage() {
 
       {/* Notification bar */}
       {discoverMsg && (
-        <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg px-4 py-3 text-sm text-indigo-300 flex items-center justify-between">
+        <div className="cursor-pointer bg-indigo-500/10 border border-indigo-500/30 rounded-lg px-4 py-3 text-sm text-indigo-300 flex items-center justify-between">
           <span>{discoverMsg}</span>
           <button onClick={() => setDiscoverMsg("")} className="text-[#64748b] hover:text-white ml-4">✕</button>
         </div>
       )}
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <select
           value={statusFilter}
           onChange={(e) => { setStatusFilter(e.target.value as LeadStatus | ""); setPage(1); }}
@@ -138,6 +173,24 @@ export default function LeadsPage() {
             <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
           ))}
         </select>
+        <select
+          value={ventureFilter}
+          onChange={(e) => { setVentureFilter(e.target.value); setPage(1); }}
+          className="bg-[#1e293b] border border-[#334155] rounded-lg px-3 py-2 text-sm text-[#cbd5e1] focus:outline-none focus:border-indigo-500 transition"
+        >
+          <option value="">All ventures</option>
+          {ventures.map((v) => (
+            <option key={v.venture} value={v.venture}>{v.venture} ({v.count})</option>
+          ))}
+        </select>
+        {selectedIds.size > 0 && (
+          <a
+            href={`/campaigns/new?leads=${Array.from(selectedIds).join(",")}`}
+            className="text-sm bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg transition"
+          >
+            Create campaign ({selectedIds.size})
+          </a>
+        )}
       </div>
 
       {/* Table */}
@@ -158,7 +211,19 @@ export default function LeadsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#334155]">
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={toggleSelectAllPage}
+                      disabled={pageLeadIds.length === 0}
+                      aria-label="Select all leads on this page"
+                      className="rounded border-[#334155]"
+                    />
+                  </th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-[#64748b] uppercase tracking-wide">Company</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-[#64748b] uppercase tracking-wide">Venture</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-[#64748b] uppercase tracking-wide">Industry</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-[#64748b] uppercase tracking-wide">Location</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-[#64748b] uppercase tracking-wide">Employees</th>
@@ -170,6 +235,22 @@ export default function LeadsPage() {
               <tbody className="divide-y divide-[#334155]">
                 {leads.map((lead) => (
                   <tr key={lead.id} className="hover:bg-[#334155]/40 transition cursor-pointer" onClick={() => router.push(`/leads/${lead.id}`)}>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={lead.id ? selectedIds.has(lead.id) : false}
+                        onChange={() => {
+                          if (!lead.id) return;
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(lead.id!)) next.delete(lead.id!);
+                            else next.add(lead.id!);
+                            return next;
+                          });
+                        }}
+                        className="rounded border-[#334155]"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div>
                         <p className="font-medium text-white">{lead.company_info.name}</p>
@@ -186,6 +267,7 @@ export default function LeadsPage() {
                         )}
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-[#94a3b8] text-xs">{lead.venture || "—"}</td>
                     <td className="px-4 py-3 text-[#94a3b8]">{lead.company_info.industry || "—"}</td>
                     <td className="px-4 py-3 text-[#94a3b8]">
                       {[lead.company_info.city, lead.company_info.country].filter(Boolean).join(", ") || lead.company_info.location || "—"}
@@ -220,14 +302,14 @@ export default function LeadsPage() {
             <button
               disabled={page === 1}
               onClick={() => setPage(p => p - 1)}
-              className="px-3 py-1.5 rounded-lg border border-[#334155] disabled:opacity-40 hover:border-indigo-500 hover:text-white transition"
+              className="cursor-pointer px-3 py-1.5 rounded-lg border border-[#334155] disabled:opacity-40 hover:border-indigo-500 hover:text-white transition"
             >
               Previous
             </button>
             <button
               disabled={page === totalPages}
               onClick={() => setPage(p => p + 1)}
-              className="px-3 py-1.5 rounded-lg border border-[#334155] disabled:opacity-40 hover:border-indigo-500 hover:text-white transition"
+              className="cursor-pointer px-3 py-1.5 rounded-lg border border-[#334155] disabled:opacity-40 hover:border-indigo-500 hover:text-white transition"
             >
               Next
             </button>

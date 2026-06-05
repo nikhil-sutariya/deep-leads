@@ -3,18 +3,19 @@ import { useState, FormEvent } from "react";
 
 interface Props {
   onClose: () => void;
-  onDiscover: (query: string, maxResults: number) => void;
+  onDiscover: (query: string, maxResults: number, venture?: string) => void;
   discovering: boolean;
 }
 
 export default function DiscoverModal({ onClose, onDiscover, discovering }: Props) {
   const [query, setQuery] = useState("");
   const [maxResults, setMaxResults] = useState(20);
+  const [venture, setVenture] = useState("");
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (query.trim().length < 20) return;
-    onDiscover(query.trim(), maxResults);
+    onDiscover(query.trim(), maxResults, venture.trim() || undefined);
   }
 
   return (
@@ -26,7 +27,7 @@ export default function DiscoverModal({ onClose, onDiscover, discovering }: Prop
             <h2 className="text-base font-semibold text-white">Discover Leads</h2>
             <p className="text-xs text-[#64748b] mt-0.5">Describe the companies you're looking for</p>
           </div>
-          <button onClick={onClose} disabled={discovering} className="text-[#475569] hover:text-white transition">
+          <button onClick={onClose} disabled={discovering} className="cursor-pointer text-[#475569] hover:text-white transition">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -52,6 +53,20 @@ export default function DiscoverModal({ onClose, onDiscover, discovering }: Prop
 
           <div>
             <label className="block text-sm font-medium text-[#94a3b8] mb-1.5">
+              Venture tag (optional)
+            </label>
+            <input
+              value={venture}
+              onChange={(e) => setVenture(e.target.value)}
+              disabled={discovering}
+              placeholder="e.g. garage-door-api"
+              className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#475569] focus:outline-none focus:border-indigo-500 transition"
+            />
+            <p className="text-xs text-[#475569] mt-1">Group leads by startup idea for filtering and campaigns.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-[#94a3b8] mb-1.5">
               Max results
             </label>
             <select
@@ -71,14 +86,14 @@ export default function DiscoverModal({ onClose, onDiscover, discovering }: Prop
               type="button"
               onClick={onClose}
               disabled={discovering}
-              className="px-4 py-2.5 text-sm text-[#94a3b8] hover:text-white border border-[#334155] rounded-lg transition"
+              className="cursor-pointer px-4 py-2.5 text-sm text-[#94a3b8] hover:text-white border border-[#334155] rounded-lg transition"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={discovering || query.trim().length < 20}
-              className="flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium px-5 py-2.5 rounded-lg transition"
+              className="cursor-pointer flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium px-5 py-2.5 rounded-lg transition"
             >
               {discovering ? (
                 <>

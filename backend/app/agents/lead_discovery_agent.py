@@ -133,7 +133,7 @@ class LeadDiscoveryAgent:
         for i in range(3): 
             try:
                 response = self.client.models.generate_content(
-                    model="gemini-2.5-flash", 
+                    model="gemini-2.5-flash-lite", 
                     contents=contents,
                     config=config
                 )
@@ -294,7 +294,8 @@ class LeadDiscoveryAgent:
 
         email = raw.get("email")
         if isinstance(email, str):
-            email = email.strip().lower() or None
+            from app.utils.email_sanitize import extract_first_email
+            email = extract_first_email(email.strip()) or None
         cleaned["email"] = email
 
         address = raw.get("address")
