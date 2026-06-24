@@ -5,6 +5,7 @@ class ErrorMessage:
 
 
 class InfoMessage:
+    lead_created = "Lead created successfully"
     leads_discovered = "Leads discovered successfully"
     leads_fetched = "Leads fetched successfully"
     lead_fetched = "Lead fetched successfully"

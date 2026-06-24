@@ -20,14 +20,14 @@ export default function DiscoverModal({ onClose, onDiscover, discovering }: Prop
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-xl bg-[#1e293b] border border-[#334155] rounded-2xl shadow-2xl">
+      <div className="w-full max-w-xl bg-card border border-border rounded-2xl shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-[#334155]">
+        <div className="flex items-center justify-between p-5 border-b border-border">
           <div>
-            <h2 className="text-base font-semibold text-white">Discover Leads</h2>
-            <p className="text-xs text-[#64748b] mt-0.5">Describe the companies you're looking for</p>
+            <h2 className="text-base font-semibold text-foreground">Discover Leads</h2>
+            <p className="text-xs text-subtle mt-0.5">Describe the companies you're looking for</p>
           </div>
-          <button onClick={onClose} disabled={discovering} className="cursor-pointer text-[#475569] hover:text-white transition">
+          <button onClick={onClose} disabled={discovering} className="cursor-pointer text-faint hover:text-foreground transition">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -37,7 +37,7 @@ export default function DiscoverModal({ onClose, onDiscover, discovering }: Prop
         {/* Body */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-[#94a3b8] mb-1.5">
+            <label className="block text-sm font-medium text-muted mb-1.5">
               What companies are you looking for?
             </label>
             <textarea
@@ -46,13 +46,13 @@ export default function DiscoverModal({ onClose, onDiscover, discovering }: Prop
               disabled={discovering}
               rows={5}
               placeholder="e.g. SaaS startups in healthcare based in the US with 10-100 employees that have raised seed or Series A funding and are focused on AI-powered diagnostics..."
-              className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3.5 py-3 text-sm text-white placeholder-[#475569] focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition resize-none"
+              className="w-full bg-background border border-border rounded-lg px-3.5 py-3 text-sm text-foreground placeholder-faint focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition resize-none"
             />
-            <p className="text-xs text-[#475569] mt-1">Minimum 20 characters. The more detail you give, the better the results.</p>
+            <p className="text-xs text-faint mt-1">Minimum 20 characters. The more detail you give, the better the results.</p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[#94a3b8] mb-1.5">
+            <label className="block text-sm font-medium text-muted mb-1.5">
               Venture tag (optional)
             </label>
             <input
@@ -60,20 +60,20 @@ export default function DiscoverModal({ onClose, onDiscover, discovering }: Prop
               onChange={(e) => setVenture(e.target.value)}
               disabled={discovering}
               placeholder="e.g. garage-door-api"
-              className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#475569] focus:outline-none focus:border-indigo-500 transition"
+              className="w-full bg-background border border-border rounded-lg px-3.5 py-2.5 text-sm text-foreground placeholder-faint focus:outline-none focus:border-indigo-500 transition"
             />
-            <p className="text-xs text-[#475569] mt-1">Group leads by startup idea for filtering and campaigns.</p>
+            <p className="text-xs text-faint mt-1">Group leads by startup idea for filtering and campaigns.</p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[#94a3b8] mb-1.5">
+            <label className="block text-sm font-medium text-muted mb-1.5">
               Max results
             </label>
             <select
               value={maxResults}
               onChange={(e) => setMaxResults(Number(e.target.value))}
               disabled={discovering}
-              className="bg-[#0f172a] border border-[#334155] rounded-lg px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
+              className="bg-background border border-border rounded-lg px-3.5 py-2.5 text-sm text-foreground focus:outline-none focus:border-indigo-500 transition"
             >
               {[10, 20, 30, 50, 100].map((n) => (
                 <option key={n} value={n}>{n} leads</option>
@@ -86,7 +86,7 @@ export default function DiscoverModal({ onClose, onDiscover, discovering }: Prop
               type="button"
               onClick={onClose}
               disabled={discovering}
-              className="cursor-pointer px-4 py-2.5 text-sm text-[#94a3b8] hover:text-white border border-[#334155] rounded-lg transition"
+              className="cursor-pointer px-4 py-2.5 text-sm text-muted hover:text-foreground border border-border rounded-lg transition"
             >
               Cancel
             </button>

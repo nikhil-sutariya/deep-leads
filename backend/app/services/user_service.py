@@ -208,6 +208,7 @@ class UserService:
                 "email": user.email,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
+                "role": getattr(user, "role", "user"),
                 "profile_picture": user.profile_picture,
                 "last_loggedin_at": user.last_loggedin_at,
                 "created_at": user.created_at,
@@ -238,6 +239,7 @@ class UserService:
                     "email": updated_user.email,
                     "first_name": updated_user.first_name,
                     "last_name": updated_user.last_name,
+                    "role": getattr(updated_user, "role", "user"),
                     "profile_picture": updated_user.profile_picture,
                     "last_loggedin_at": updated_user.last_loggedin_at,
                     "created_at": updated_user.created_at,
@@ -277,3 +279,154 @@ class UserService:
 
             return profile_picture_url, None
         return None, ErrorMessage.profile_not_updated
+
+    # ----------------------------- SMTP settings ---------------------------- #
+
+    async def get_smtp_settings(self, session: AsyncSession, user_id: uuid.UUID, reveal: bool = False) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        from app.core.crypto import decrypt_secret
+
+        user = await get_user_by_id(session, user_id)
+        if not user:
+            return None, ErrorMessage.profile_data_not_found
+
+        data: Dict[str, Any] = {
+            "smtp_host": user.smtp_host,
+            "smtp_port": user.smtp_port,
+            "smtp_username": user.smtp_username,
+            "smtp_from_email": user.smtp_from_email,
+            "smtp_from_name": user.smtp_from_name,
+            "password_set": bool(user.smtp_password_encrypted),
+            "smtp_password": None,
+            "imap_host": user.imap_host,
+            "imap_port": user.imap_port,
+            "reply_scan_enabled": bool(getattr(user, "reply_scan_enabled", False)),
+        }
+        if reveal and user.smtp_password_encrypted:
+            data["smtp_password"] = decrypt_secret(user.smtp_password_encrypted)
+        return data, None
+
+    async def update_smtp_settings(self, session: AsyncSession, user_id: uuid.UUID, payload) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        from app.core.crypto import encrypt_secret
+
+        user = await get_user_by_id(session, user_id)
+        if not user:
+            return None, ErrorMessage.profile_data_not_found
+
+        updates: Dict[str, Any] = {
+            "smtp_host": payload.smtp_host,
+            "smtp_port": payload.smtp_port,
+            "smtp_username": payload.smtp_username,
+            "smtp_from_email": payload.smtp_from_email,
+            "smtp_from_name": payload.smtp_from_name,
+            "imap_host": payload.imap_host,
+            "imap_port": payload.imap_port,
+        }
+        if payload.reply_scan_enabled is not None:
+            updates["reply_scan_enabled"] = payload.reply_scan_enabled
+        # Only overwrite the stored password when a new non-empty one is provided.
+        if payload.smtp_password:
+            updates["smtp_password_encrypted"] = encrypt_secret(payload.smtp_password)
+
+        await update_user(session, user_id, updates)
+        return await self.get_smtp_settings(session, user_id)
+
+    async def get_decrypted_smtp(self, session: AsyncSession, user_id: uuid.UUID) -> Optional[Dict[str, Any]]:
+        """Return a complete, ready-to-use SMTP config for sending, or None."""
+        from app.core.crypto import decrypt_secret
+
+        user = await get_user_by_id(session, user_id)
+        if not user:
+            return None
+        password = decrypt_secret(user.smtp_password_encrypted)
+        if not (user.smtp_host and user.smtp_port and user.smtp_username and password):
+            return None
+        return {
+            "host": user.smtp_host,
+            "port": user.smtp_port,
+            "username": user.smtp_username,
+            "password": password,
+            "from_email": user.smtp_from_email or user.smtp_username,
+            "from_name": user.smtp_from_name or "",
+        }
+
+    async def get_imap_config(self, session: AsyncSession, user_id: uuid.UUID) -> Optional[Dict[str, Any]]:
+        """Return a ready-to-use IMAP config (login reuses SMTP creds), or None."""
+        from app.core.crypto import decrypt_secret
+
+        user = await get_user_by_id(session, user_id)
+        if not user or not getattr(user, "reply_scan_enabled", False):
+            return None
+        password = decrypt_secret(user.smtp_password_encrypted)
+        if not (user.imap_host and user.imap_port and user.smtp_username and password):
+            return None
+        return {
+            "host": user.imap_host,
+            "port": user.imap_port,
+            "username": user.smtp_username,
+            "password": password,
+        }
+
+    async def send_test_smtp(self, session: AsyncSession, user_id: uuid.UUID) -> Tuple[bool, Optional[str]]:
+        from app.utils.send_email import send_campaign_email
+
+        cfg = await self.get_decrypted_smtp(session, user_id)
+        if not cfg:
+            return False, "SMTP is not fully configured"
+
+        user = await get_user_by_id(session, user_id)
+        try:
+            ok = send_campaign_email(
+                to_email=cfg["from_email"] or user.email,
+                subject="DeepLeads SMTP test",
+                body="This is a test email confirming your SMTP settings work. 🎉",
+                from_email=cfg["from_email"],
+                from_name=cfg["from_name"],
+                smtp_host=cfg["host"],
+                smtp_port=cfg["port"],
+                smtp_username=cfg["username"],
+                smtp_password=cfg["password"],
+            )
+            return (ok, None) if ok else (False, "SMTP rejected the message")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"SMTP test failed: {e}")
+            return False, str(e)
+
+    # ------------------------------ Admin: users ---------------------------- #
+
+    async def invite_user(self, session: AsyncSession, payload) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        import secrets as _secrets
+
+        email = payload.email.lower()
+        existing = await get_user_by_email(session, email)
+        if existing:
+            return None, ErrorMessage.user_already_exists
+
+        temp_password = payload.password or (_secrets.token_urlsafe(9) + "A1!")
+        generated = not payload.password
+
+        user = await create_user(session, {
+            "email": email,
+            "first_name": payload.first_name,
+            "last_name": payload.last_name,
+            "role": payload.role or "user",
+            "password": get_password_hash(temp_password),
+        })
+        if not user:
+            return None, ErrorMessage.user_not_added
+
+        return {
+            "id": user.id,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "created_at": user.created_at,
+            "last_loggedin_at": user.last_loggedin_at,
+            # Returned once so the admin can share it; only when auto-generated.
+            "temp_password": temp_password if generated else None,
+        }, None
+
+    async def list_users(self, session: AsyncSession):
+        from sqlalchemy import select
+        result = await session.execute(select(UserModel).order_by(UserModel.created_at))
+        return list(result.scalars().all())

@@ -352,6 +352,9 @@ class LeadEnrichmentAgent:
 
     @staticmethod
     def _sanitize_text(value: Any) -> Optional[str]:
+        # Note: bool is a subclass of int — exclude it so True/False never become "True"/"False".
+        if isinstance(value, bool):
+            return None
         if isinstance(value, (str, int, float)):
             text = str(value).strip()
             return text or None
@@ -365,8 +368,18 @@ class LeadEnrichmentAgent:
         return extract_first_email(text) if text else None
 
     @staticmethod
-    def _sanitize_dict(value: Any) -> Optional[Dict[str, Any]]:
+    def _sanitize_dict(value: Any) -> Optional[Dict[str, str]]:
+        """Keep only clean string values (e.g. social URLs).
+
+        The model sometimes returns booleans like {"linkedin": true} to mean
+        "has a profile"; those carry no usable value, so we drop them rather
+        than letting them break Dict[str, str] validation downstream.
+        """
         if not isinstance(value, dict):
             return None
-        cleaned = {k: v for k, v in value.items() if v not in (None, "", [], {})}
+        cleaned: Dict[str, str] = {}
+        for k, v in value.items():
+            text = LeadEnrichmentAgent._sanitize_text(v)
+            if text and text.lower() not in ("true", "false", "none", "null"):
+                cleaned[str(k)] = text
         return cleaned or None

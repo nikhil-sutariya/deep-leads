@@ -2,6 +2,15 @@ from enum import Enum
 
 email_regex = r"^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,4})+$"
 
+# SMTP/IMAP provider presets — the UI auto-fills hosts + ports from the chosen provider.
+SMTP_PROVIDERS = [
+    {"id": "gmail", "label": "Gmail", "host": "smtp.gmail.com", "port": 587, "imap_host": "imap.gmail.com", "imap_port": 993},
+    {"id": "zoho", "label": "Zoho Mail", "host": "smtp.zoho.com", "port": 587, "imap_host": "imap.zoho.com", "imap_port": 993},
+    {"id": "outlook", "label": "Outlook / Microsoft 365", "host": "smtp-mail.outlook.com", "port": 587, "imap_host": "outlook.office365.com", "imap_port": 993},
+    {"id": "yahoo", "label": "Yahoo Mail", "host": "smtp.mail.yahoo.com", "port": 587, "imap_host": "imap.mail.yahoo.com", "imap_port": 993},
+    {"id": "custom", "label": "Custom", "host": "", "port": 587, "imap_host": "", "imap_port": 993},
+]
+
 class Environment(str, Enum):
     development = "development"
     production = "production"

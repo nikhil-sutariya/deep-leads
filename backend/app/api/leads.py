@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.schemas.lead import (
     LeadDiscoveryRequest,
     Lead,
+    LeadManualCreate,
     LeadResponse,
     LeadListResponse,
     LeadStatus,
@@ -46,6 +47,26 @@ def _ensure_lead_owner(db_lead: Optional[LeadDB], user_id: uuid.UUID) -> None:
 prompt_builder_agent = PromptBuilderAgent()
 discovery_agent = LeadDiscoveryAgent()
 enrichment_agent = LeadEnrichmentAgent()
+
+
+@router.post("", response_model=LeadEnvelope)
+async def create_lead_manual(
+    payload: LeadManualCreate,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a lead manually. Only `company_name` is required."""
+    try:
+        db_lead = await LeadService.create_manual_lead(db, payload, user_id=current_user.id)
+        lead = LeadService._db_lead_to_schema(db_lead)
+        return {
+            "success": True,
+            "message": InfoMessage.lead_created,
+            "data": {"lead": lead},
+        }
+    except Exception as e:
+        logger.error(f"Error creating manual lead: {e}")
+        raise HTTPException(status_code=500, detail=ErrorMessage.server_error)
 
 
 @router.post("/discover", response_model=LeadListEnvelope)
@@ -82,9 +103,14 @@ async def discover_leads(
             request.max_results,
         )
 
+        # Skip companies we already have for this user (dedup / already-contacted guard).
+        new_leads, skipped = await LeadService.filter_new_leads(
+            db, current_user.id, discovered_leads
+        )
+
         db_leads = await LeadService.bulk_create_leads(
             db,
-            discovered_leads,
+            new_leads,
             user_id=current_user.id,
             source_query=request.query,
             venture=request.venture,
@@ -92,11 +118,14 @@ async def discover_leads(
 
         leads = [LeadService._db_lead_to_schema(db_lead) for db_lead in db_leads]
 
-        logger.info(f"Discovered and saved {len(leads)} leads")
+        message = f"Discovered {len(leads)} new leads"
+        if skipped:
+            message += f" ({skipped} duplicates skipped)"
+        logger.info(f"Discovered {len(leads)} new leads, {skipped} duplicates skipped")
 
         return {
             "success": True,
-            "message": InfoMessage.leads_discovered,
+            "message": message,
             "data": {
                 "leads": leads,
                 "total": len(leads),

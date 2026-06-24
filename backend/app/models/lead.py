@@ -82,10 +82,15 @@ class CampaignDB(Base):
     send_from_email = Column(String)
     send_from_name = Column(String)
     follow_up_days = Column(JSON)  # List of days for follow-ups
-    
+
+    # Scheduled sending — timezone-aware start + anti-spam pacing
+    send_timezone = Column(String)  # IANA tz name, e.g. "Asia/Kolkata"
+    min_delay_seconds = Column(Integer, default=180)  # min gap between emails
+    max_delay_seconds = Column(Integer, default=480)  # max gap between emails
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    scheduled_at = Column(DateTime)
+    scheduled_at = Column(DateTime)  # absolute UTC moment sending should begin
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
     
@@ -99,6 +104,11 @@ class CampaignDB(Base):
     
     # Relationships
     campaign_emails = relationship("CampaignEmailDB", back_populates="campaign")
+    attachments = relationship(
+        "CampaignAttachmentDB",
+        back_populates="campaign",
+        cascade="all, delete-orphan",
+    )
 
 
 class CampaignEmailDB(Base):
@@ -124,6 +134,7 @@ class CampaignEmailDB(Base):
     
     # Tracking
     tracking_id = Column(String, unique=True)
+    message_id = Column(String, index=True)  # RFC Message-ID of the sent email (for reply matching)
     error_message = Column(Text)
     follow_up_number = Column(Integer, default=0)
     parent_email_id = Column(UUID(as_uuid=True), ForeignKey("campaign_emails.id"), nullable=True)
@@ -132,4 +143,59 @@ class CampaignEmailDB(Base):
     # Relationships
     campaign = relationship("CampaignDB", back_populates="campaign_emails")
     lead = relationship("LeadDB", back_populates="campaign_emails")
+
+
+class SavedSearchDB(Base):
+    """A reusable lead-discovery query that can re-run on a schedule.
+
+    Auto-discovery re-runs `query` on the chosen `cadence`, dedupes against the
+    user's existing leads, and saves only new companies.
+    """
+    __tablename__ = "saved_searches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+
+    name = Column(String, nullable=False)
+    query = Column(Text, nullable=False)
+    max_results = Column(Integer, default=25)
+    venture = Column(String)
+
+    cadence = Column(String, default="off")  # off | daily | weekly
+    enabled = Column(Integer, default=1)      # stored as 0/1 for portability
+
+    last_run_at = Column(DateTime)
+    last_run_new_count = Column(Integer, default=0)
+    total_found = Column(Integer, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CampaignAttachmentDB(Base):
+    """File attached to a campaign's outgoing emails.
+
+    Scope is determined by `email_id`:
+    - `email_id IS NULL` → campaign-wide; attached to every email in the campaign.
+    - `email_id` set      → attached only to that specific email.
+    """
+    __tablename__ = "campaign_attachments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
+    campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaigns.id"), nullable=False, index=True)
+    email_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("campaign_emails.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+
+    filename = Column(String, nullable=False)      # original display name
+    stored_path = Column(String, nullable=False)   # path on disk
+    content_type = Column(String)
+    size_bytes = Column(Integer)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    campaign = relationship("CampaignDB", back_populates="attachments")
 

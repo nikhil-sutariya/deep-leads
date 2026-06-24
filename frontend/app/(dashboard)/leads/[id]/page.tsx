@@ -8,8 +8,8 @@ import StatusBadge from "@/components/StatusBadge";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-5">
-      <h2 className="text-sm font-medium text-[#94a3b8] uppercase tracking-wide mb-4">{title}</h2>
+    <div className="bg-card border border-border rounded-xl p-5">
+      <h2 className="text-sm font-medium text-muted uppercase tracking-wide mb-4">{title}</h2>
       {children}
     </div>
   );
@@ -19,8 +19,8 @@ function Field({ label, value }: { label: string; value?: string | number | null
   if (!value && value !== 0) return null;
   return (
     <div>
-      <p className="text-xs text-[#64748b] mb-0.5">{label}</p>
-      <p className="text-sm text-[#cbd5e1]">{value}</p>
+      <p className="text-xs text-subtle mb-0.5">{label}</p>
+      <p className="text-sm text-foreground">{value}</p>
     </div>
   );
 }
@@ -52,7 +52,7 @@ function leadToEditForm(lead: Lead): LeadContactUpdate {
 }
 
 const inputClass =
-  "w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-white placeholder-[#475569] focus:outline-none focus:border-indigo-500";
+  "w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-faint focus:outline-none focus:border-indigo-500";
 
 export default function LeadDetailPage() {
   const params = useParams<{ id: string }>();
@@ -154,7 +154,7 @@ export default function LeadDetailPage() {
 
   if (error || !lead) {
     return (
-      <div className="text-center py-16 text-[#64748b]">
+      <div className="text-center py-16 text-subtle">
         <p className="mb-4">{error || "Lead not found"}</p>
         <button onClick={() => router.push("/leads")} className="cursor-pointer text-indigo-400 hover:underline text-sm">
           ← Back to leads
@@ -170,7 +170,7 @@ export default function LeadDetailPage() {
     <div className="space-y-5 max-w-4xl">
       <button
         onClick={() => router.push("/leads")}
-        className="cursor-pointer flex items-center gap-1.5 text-sm text-[#64748b] hover:text-white transition"
+        className="cursor-pointer flex items-center gap-1.5 text-sm text-subtle hover:text-foreground transition"
       >
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -180,7 +180,7 @@ export default function LeadDetailPage() {
 
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white">{ci.name}</h1>
+          <h1 className="text-2xl font-semibold text-foreground">{ci.name}</h1>
           {ci.website && (
             <a href={ci.website} target="_blank" rel="noopener noreferrer" className="text-sm text-indigo-400 hover:underline">
               {ci.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
@@ -192,7 +192,7 @@ export default function LeadDetailPage() {
           {lead.id && !editing && (
             <Link
               href={`/campaigns/new?leads=${lead.id}`}
-              className="text-sm border border-[#334155] text-[#94a3b8] hover:text-white px-3 py-2 rounded-lg transition"
+              className="text-sm border border-border text-muted hover:text-foreground px-3 py-2 rounded-lg transition"
             >
               Add to campaign
             </Link>
@@ -200,7 +200,7 @@ export default function LeadDetailPage() {
           {!editing && (
             <button
               onClick={startEditing}
-              className="cursor-pointer flex items-center gap-2 border border-[#334155] text-[#94a3b8] hover:text-white text-sm font-medium px-4 py-2 rounded-lg transition"
+              className="cursor-pointer flex items-center gap-2 border border-border text-muted hover:text-foreground text-sm font-medium px-4 py-2 rounded-lg transition"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -241,7 +241,7 @@ export default function LeadDetailPage() {
           }`}
         >
           <span>{enrichMsg}</span>
-          <button onClick={() => setEnrichMsg("")} className="cursor-pointer ml-4 text-[#64748b] hover:text-white">
+          <button onClick={() => setEnrichMsg("")} className="cursor-pointer ml-4 text-subtle hover:text-foreground">
             ✕
           </button>
         </div>
@@ -252,7 +252,7 @@ export default function LeadDetailPage() {
           <Section title="Company contact">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-[#64748b] mb-1">Company email</label>
+                <label className="block text-xs text-subtle mb-1">Company email</label>
                 <input
                   type="email"
                   value={editForm.email ?? ""}
@@ -262,7 +262,7 @@ export default function LeadDetailPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-[#64748b] mb-1">Phone</label>
+                <label className="block text-xs text-subtle mb-1">Phone</label>
                 <input
                   value={editForm.phone ?? ""}
                   onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))}
@@ -271,7 +271,7 @@ export default function LeadDetailPage() {
                 />
               </div>
               <div className="sm:col-span-2">
-                <label className="block text-xs text-[#64748b] mb-1">Address</label>
+                <label className="block text-xs text-subtle mb-1">Address</label>
                 <input
                   value={editForm.address ?? ""}
                   onChange={(e) => setEditForm((p) => ({ ...p, address: e.target.value }))}
@@ -279,7 +279,7 @@ export default function LeadDetailPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-[#64748b] mb-1">City</label>
+                <label className="block text-xs text-subtle mb-1">City</label>
                 <input
                   value={editForm.city ?? ""}
                   onChange={(e) => setEditForm((p) => ({ ...p, city: e.target.value }))}
@@ -287,7 +287,7 @@ export default function LeadDetailPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-[#64748b] mb-1">Country</label>
+                <label className="block text-xs text-subtle mb-1">Country</label>
                 <input
                   value={editForm.country ?? ""}
                   onChange={(e) => setEditForm((p) => ({ ...p, country: e.target.value }))}
@@ -295,7 +295,7 @@ export default function LeadDetailPage() {
                 />
               </div>
               <div className="sm:col-span-2">
-                <label className="block text-xs text-[#64748b] mb-1">Notes</label>
+                <label className="block text-xs text-subtle mb-1">Notes</label>
                 <textarea
                   rows={2}
                   value={editForm.notes ?? ""}
@@ -307,14 +307,14 @@ export default function LeadDetailPage() {
           </Section>
 
           <Section title="Decision makers">
-            <p className="text-xs text-[#64748b] mb-4">
+            <p className="text-xs text-subtle mb-4">
               Add or fix contacts the AI missed. The first contact with an email is used for campaigns.
             </p>
             <div className="space-y-4">
               {(editForm.decision_makers ?? []).map((dm, i) => (
-                <div key={i} className="bg-[#0f172a] border border-[#334155] rounded-lg p-4 space-y-3">
+                <div key={i} className="bg-background border border-border rounded-lg p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-[#94a3b8]">Contact {i + 1}</span>
+                    <span className="text-xs font-medium text-muted">Contact {i + 1}</span>
                     {(editForm.decision_makers?.length ?? 0) > 1 && (
                       <button
                         type="button"
@@ -327,7 +327,7 @@ export default function LeadDetailPage() {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs text-[#64748b] mb-1">Name</label>
+                      <label className="block text-xs text-subtle mb-1">Name</label>
                       <input
                         value={dm.name ?? ""}
                         onChange={(e) => updateDecisionMaker(i, "name", e.target.value)}
@@ -336,7 +336,7 @@ export default function LeadDetailPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-[#64748b] mb-1">Title</label>
+                      <label className="block text-xs text-subtle mb-1">Title</label>
                       <input
                         value={dm.title ?? ""}
                         onChange={(e) => updateDecisionMaker(i, "title", e.target.value)}
@@ -345,7 +345,7 @@ export default function LeadDetailPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-[#64748b] mb-1">Email</label>
+                      <label className="block text-xs text-subtle mb-1">Email</label>
                       <input
                         type="email"
                         value={dm.email ?? ""}
@@ -355,7 +355,7 @@ export default function LeadDetailPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-[#64748b] mb-1">Phone</label>
+                      <label className="block text-xs text-subtle mb-1">Phone</label>
                       <input
                         value={dm.phone ?? ""}
                         onChange={(e) => updateDecisionMaker(i, "phone", e.target.value)}
@@ -363,7 +363,7 @@ export default function LeadDetailPage() {
                       />
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="block text-xs text-[#64748b] mb-1">LinkedIn URL</label>
+                      <label className="block text-xs text-subtle mb-1">LinkedIn URL</label>
                       <input
                         value={dm.linkedin_url ?? ""}
                         onChange={(e) => updateDecisionMaker(i, "linkedin_url", e.target.value)}
@@ -389,7 +389,7 @@ export default function LeadDetailPage() {
               type="button"
               onClick={cancelEditing}
               disabled={saving}
-              className="cursor-pointer px-4 py-2.5 text-sm text-[#94a3b8] border border-[#334155] rounded-lg hover:text-white transition"
+              className="cursor-pointer px-4 py-2.5 text-sm text-muted border border-border rounded-lg hover:text-foreground transition"
             >
               Cancel
             </button>
@@ -434,7 +434,7 @@ export default function LeadDetailPage() {
               <Section title="Tech Stack">
                 <div className="flex flex-wrap gap-2">
                   {ci.tech_stack!.map((t) => (
-                    <span key={t} className="bg-[#334155] text-[#94a3b8] text-xs px-2.5 py-1 rounded-full">
+                    <span key={t} className="bg-hover text-muted text-xs px-2.5 py-1 rounded-full">
                       {t}
                     </span>
                   ))}
@@ -448,7 +448,7 @@ export default function LeadDetailPage() {
                   {Object.entries(ed.social_media).map(([platform, url]) =>
                     url ? (
                       <div key={platform} className="flex items-center gap-2">
-                        <span className="text-xs text-[#64748b] w-20 capitalize">{platform}</span>
+                        <span className="text-xs text-subtle w-20 capitalize">{platform}</span>
                         <a
                           href={url}
                           target="_blank"
@@ -469,15 +469,15 @@ export default function LeadDetailPage() {
             <Section title="Decision Makers">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {ed!.decision_makers!.map((dm, i) => (
-                  <div key={i} className="bg-[#0f172a] border border-[#334155] rounded-lg p-3 space-y-1.5">
-                    <p className="text-sm font-medium text-white">{dm.name || "—"}</p>
+                  <div key={i} className="bg-background border border-border rounded-lg p-3 space-y-1.5">
+                    <p className="text-sm font-medium text-foreground">{dm.name || "—"}</p>
                     {dm.title && <p className="text-xs text-indigo-400">{dm.title}</p>}
                     {dm.email ? (
-                      <p className="text-xs text-[#94a3b8]">{dm.email}</p>
+                      <p className="text-xs text-muted">{dm.email}</p>
                     ) : (
                       <p className="text-xs text-amber-400/80">No email — use Edit contacts</p>
                     )}
-                    {dm.phone && <p className="text-xs text-[#94a3b8]">{dm.phone}</p>}
+                    {dm.phone && <p className="text-xs text-muted">{dm.phone}</p>}
                     {dm.linkedin_url && (
                       <a
                         href={dm.linkedin_url}
@@ -494,11 +494,11 @@ export default function LeadDetailPage() {
             </Section>
           ) : (
             !enriching && (
-              <div className="bg-[#1e293b] border border-dashed border-[#334155] rounded-xl p-8 text-center">
-                <p className="text-sm text-[#64748b]">No decision makers yet.</p>
-                <p className="text-xs text-[#475569] mt-1">
-                  Run <strong className="text-[#64748b]">Enrich Lead</strong> or use{" "}
-                  <strong className="text-[#64748b]">Edit contacts</strong> to add them manually.
+              <div className="bg-card border border-dashed border-border rounded-xl p-8 text-center">
+                <p className="text-sm text-subtle">No decision makers yet.</p>
+                <p className="text-xs text-faint mt-1">
+                  Run <strong className="text-subtle">Enrich Lead</strong> or use{" "}
+                  <strong className="text-subtle">Edit contacts</strong> to add them manually.
                 </p>
               </div>
             )
@@ -513,13 +513,13 @@ export default function LeadDetailPage() {
               <Link
                 key={c.email_id}
                 href={`/campaigns/${c.campaign_id}`}
-                className="flex items-center justify-between bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 hover:border-indigo-500/50 transition"
+                className="flex items-center justify-between bg-background border border-border rounded-lg px-3 py-2 hover:border-indigo-500/50 transition"
               >
                 <div>
-                  <p className="text-sm text-white">{c.campaign_name}</p>
-                  <p className="text-xs text-[#64748b] truncate">{c.subject || "—"}</p>
+                  <p className="text-sm text-foreground">{c.campaign_name}</p>
+                  <p className="text-xs text-subtle truncate">{c.subject || "—"}</p>
                 </div>
-                <span className="text-xs text-[#475569]">
+                <span className="text-xs text-faint">
                   {c.sent_at ? new Date(c.sent_at).toLocaleDateString() : "Draft"}
                   {c.follow_up_number > 0 ? ` · FU${c.follow_up_number}` : ""}
                 </span>
@@ -530,7 +530,7 @@ export default function LeadDetailPage() {
       )}
 
       {!editing && (
-        <div className="text-xs text-[#475569] space-y-0.5">
+        <div className="text-xs text-faint space-y-0.5">
           {lead.venture && <p>Venture: {lead.venture}</p>}
           <p>Discovered: {new Date(lead.discovered_at).toLocaleString()}</p>
           {lead.enriched_at && <p>Enriched: {new Date(lead.enriched_at).toLocaleString()}</p>}

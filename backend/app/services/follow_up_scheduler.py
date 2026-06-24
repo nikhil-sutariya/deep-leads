@@ -46,6 +46,17 @@ async def process_follow_ups() -> None:
                 if not initial.sent_at:
                     continue
 
+                # Auto-stop: skip if this lead already replied anywhere in the campaign.
+                replied = await db.execute(
+                    select(CampaignEmailDB.id).where(
+                        CampaignEmailDB.campaign_id == campaign.id,
+                        CampaignEmailDB.lead_id == initial.lead_id,
+                        CampaignEmailDB.replied_at.isnot(None),
+                    )
+                )
+                if replied.first():
+                    continue
+
                 for idx, days in enumerate(campaign.follow_up_days):
                     follow_num = idx + 1
                     due_at = initial.sent_at + timedelta(days=days)

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { ApiEnvelope, CampaignCreatePayload, Lead, LeadListResponse, LeadStatus } from "@/lib/types";
 import StatusBadge from "@/components/StatusBadge";
+import { TIMEZONES, DEFAULT_TIMEZONE } from "@/lib/timezones";
 
 function NewCampaignForm() {
   const router = useRouter();
@@ -27,6 +28,9 @@ function NewCampaignForm() {
   const [fromEmail, setFromEmail] = useState("");
   const [fromName, setFromName] = useState("");
   const [followUpDays, setFollowUpDays] = useState("3,7,14");
+  const [sendTimezone, setSendTimezone] = useState(DEFAULT_TIMEZONE);
+  const [minDelay, setMinDelay] = useState(3);
+  const [maxDelay, setMaxDelay] = useState(8);
 
   useEffect(() => {
     const params: Record<string, unknown> = { skip: 0, limit: 200 };
@@ -69,6 +73,9 @@ function NewCampaignForm() {
         send_from_email: fromEmail,
         send_from_name: fromName,
         follow_up_days: days.length ? days : undefined,
+        send_timezone: sendTimezone,
+        min_delay_seconds: Math.round(minDelay * 60),
+        max_delay_seconds: Math.round(maxDelay * 60),
       };
 
       const res = await api.post<{ campaign: { id: string }; message: string }>("/campaigns", payload);
@@ -89,8 +96,8 @@ function NewCampaignForm() {
         <Link href="/campaigns" className="text-sm text-indigo-400 hover:underline">
           ← Back to campaigns
         </Link>
-        <h1 className="text-2xl font-semibold text-white mt-2">New Campaign</h1>
-        <p className="text-sm text-[#64748b] mt-0.5">Select leads and configure AI-personalized outreach</p>
+        <h1 className="text-2xl font-semibold text-foreground mt-2">New Campaign</h1>
+        <p className="text-sm text-subtle mt-0.5">Select leads and configure AI-personalized outreach</p>
       </div>
 
       {error && (
@@ -100,96 +107,139 @@ function NewCampaignForm() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-5 space-y-4">
-          <h2 className="text-sm font-medium text-[#94a3b8] uppercase tracking-wide">Campaign details</h2>
+        <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+          <h2 className="text-sm font-medium text-muted uppercase tracking-wide">Campaign details</h2>
           <div>
-            <label className="block text-sm text-[#94a3b8] mb-1">Campaign name</label>
+            <label className="block text-sm text-muted mb-1">Campaign name</label>
             <input
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-white"
+              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
               placeholder="Garage Door API - Q2 2026"
             />
           </div>
           <div>
-            <label className="block text-sm text-[#94a3b8] mb-1">Campaign goal</label>
+            <label className="block text-sm text-muted mb-1">Campaign goal</label>
             <textarea
               required
               rows={3}
               value={campaignGoal}
               onChange={(e) => setCampaignGoal(e.target.value)}
-              className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-white resize-none"
+              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none"
               placeholder="Introduce our garage door boundary detection API to companies with door visualization tools..."
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm text-[#94a3b8] mb-1">From email</label>
+              <label className="block text-sm text-muted mb-1">From email</label>
               <input
                 required
                 type="email"
                 value={fromEmail}
                 onChange={(e) => setFromEmail(e.target.value)}
-                className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-white"
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
               />
             </div>
             <div>
-              <label className="block text-sm text-[#94a3b8] mb-1">From name</label>
+              <label className="block text-sm text-muted mb-1">From name</label>
               <input
                 required
                 value={fromName}
                 onChange={(e) => setFromName(e.target.value)}
-                className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-white"
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
               />
             </div>
           </div>
           <div>
-            <label className="block text-sm text-[#94a3b8] mb-1">Follow-up days (comma-separated)</label>
+            <label className="block text-sm text-muted mb-1">Follow-up days (comma-separated)</label>
             <input
               value={followUpDays}
               onChange={(e) => setFollowUpDays(e.target.value)}
-              className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-white"
+              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
               placeholder="3,7,14"
             />
           </div>
         </div>
 
-        <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-5 space-y-4">
-          <h2 className="text-sm font-medium text-[#94a3b8] uppercase tracking-wide">Email template</h2>
+        <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+          <h2 className="text-sm font-medium text-muted uppercase tracking-wide">Sending settings</h2>
+          <p className="text-xs text-faint -mt-2">
+            Used when you schedule sending from the campaign page. Emails go out one at a time with a random gap to avoid spam filters.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="sm:col-span-1">
+              <label className="block text-sm text-muted mb-1">Timezone</label>
+              <select
+                value={sendTimezone}
+                onChange={(e) => setSendTimezone(e.target.value)}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
+              >
+                {TIMEZONES.map((tz) => (
+                  <option key={tz.value} value={tz.value}>{tz.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-muted mb-1">Min delay (minutes)</label>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={minDelay}
+                onChange={(e) => setMinDelay(Number(e.target.value))}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-muted mb-1">Max delay (minutes)</label>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={maxDelay}
+                onChange={(e) => setMaxDelay(Number(e.target.value))}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+          <h2 className="text-sm font-medium text-muted uppercase tracking-wide">Email template</h2>
           <div>
-            <label className="block text-sm text-[#94a3b8] mb-1">Subject template</label>
+            <label className="block text-sm text-muted mb-1">Subject template</label>
             <input
               required
               value={subjectLine}
               onChange={(e) => setSubjectLine(e.target.value)}
-              className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-white"
+              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
             />
           </div>
           <div>
-            <label className="block text-sm text-[#94a3b8] mb-1">Body template</label>
+            <label className="block text-sm text-muted mb-1">Body template</label>
             <textarea
               required
               rows={6}
               value={bodyTemplate}
               onChange={(e) => setBodyTemplate(e.target.value)}
-              className="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-white resize-none font-mono"
+              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none font-mono"
             />
-            <p className="text-xs text-[#475569] mt-1">
+            <p className="text-xs text-faint mt-1">
               Use {"{company_name}"}, {"{contact_name}"}, {"{industry}"} — AI will personalize per lead.
             </p>
           </div>
         </div>
 
-        <div className="bg-[#1e293b] border border-[#334155] rounded-xl overflow-hidden">
-          <div className="p-5 border-b border-[#334155] flex items-center justify-between">
-            <h2 className="text-sm font-medium text-[#94a3b8] uppercase tracking-wide">
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="p-5 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-medium text-muted uppercase tracking-wide">
               Select leads ({selected.size} selected)
             </h2>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as LeadStatus | "")}
-              className="bg-[#0f172a] border border-[#334155] rounded-lg px-2 py-1 text-xs text-[#cbd5e1]"
+              className="bg-background border border-border rounded-lg px-2 py-1 text-xs text-foreground"
             >
               <option value="">All</option>
               <option value="enriched">Enriched</option>
@@ -202,21 +252,21 @@ function NewCampaignForm() {
               <div className="w-7 h-7 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : (
-            <div className="max-h-80 overflow-y-auto divide-y divide-[#334155]">
+            <div className="max-h-80 overflow-y-auto divide-y divide-border">
               {leads.map((lead) => (
                 <label
                   key={lead.id}
-                  className="flex items-center gap-3 px-5 py-3 hover:bg-[#334155]/30 cursor-pointer"
+                  className="flex items-center gap-3 px-5 py-3 hover:bg-hover/30 cursor-pointer"
                 >
                   <input
                     type="checkbox"
                     checked={lead.id ? selected.has(lead.id) : false}
                     onChange={() => lead.id && toggleLead(lead.id)}
-                    className="rounded border-[#334155]"
+                    className="rounded border-border"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-white truncate">{lead.company_info.name}</p>
-                    <p className="text-xs text-[#64748b]">{lead.company_info.industry || "—"}</p>
+                    <p className="text-sm font-medium text-foreground truncate">{lead.company_info.name}</p>
+                    <p className="text-xs text-subtle">{lead.company_info.industry || "—"}</p>
                   </div>
                   <StatusBadge status={lead.status} />
                 </label>
@@ -239,7 +289,7 @@ function NewCampaignForm() {
 
 export default function NewCampaignPage() {
   return (
-    <Suspense fallback={<div className="text-[#64748b]">Loading…</div>}>
+    <Suspense fallback={<div className="text-subtle">Loading…</div>}>
       <NewCampaignForm />
     </Suspense>
   );

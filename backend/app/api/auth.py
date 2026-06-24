@@ -9,11 +9,13 @@ from app.messages.user import ErrorMessage, InfoMessage
 from app.schemas.user import (
     LoginSchema, RequestEmailLinkForgotPasswordSchema,
     ResetForgotPasswordSchema, ChangePasswordSchema, UpdateProfileSchema,
-    CurrentUser
+    CurrentUser, SmtpSettingsUpdate, SmtpSettingsResponse, InviteUserSchema,
+    UserListItem
 )
+from typing import List
 from fastapi.security import OAuth2PasswordRequestForm
 from app.repositories.user_repository import get_notifications_by_user, update_notification_status, get_user_by_id
-from app.api.deps.auth_deps import get_current_user, get_current_user_from_token
+from app.api.deps.auth_deps import get_current_user, get_current_user_from_token, require_admin
 from app.core.database import get_db
 from app.core.config import get_settings
 from app.core import constants
@@ -331,6 +333,51 @@ async def update_profile_picture(profile_picture: UploadFile = File(), user_id: 
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"success": False, "message": ErrorMessage.server_error, "error": str(e)}
         )
+
+@router.get("/smtp/providers")
+async def smtp_providers(current_user: CurrentUser = Depends(get_current_user)):
+    """Known SMTP providers so the UI can auto-fill host + port."""
+    return {"success": True, "data": constants.SMTP_PROVIDERS}
+
+
+@router.get("/smtp")
+async def get_smtp_settings(reveal: bool = False, current_user: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    data, error = await user_service.get_smtp_settings(db, current_user.id, reveal=reveal)
+    if error:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"success": False, "message": error, "error": None})
+    return {"success": True, "message": "SMTP settings fetched", "data": jsonable_encoder(SmtpSettingsResponse(**data))}
+
+
+@router.put("/smtp")
+async def update_smtp_settings(payload: SmtpSettingsUpdate, current_user: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    data, error = await user_service.update_smtp_settings(db, current_user.id, payload)
+    if error:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"success": False, "message": error, "error": None})
+    return {"success": True, "message": "SMTP settings saved", "data": jsonable_encoder(SmtpSettingsResponse(**data))}
+
+
+@router.post("/smtp/test")
+async def test_smtp_settings(current_user: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    ok, error = await user_service.send_test_smtp(db, current_user.id)
+    if not ok:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"success": False, "message": error or "Test failed", "error": None})
+    return {"success": True, "message": "Test email sent — check your inbox", "data": None}
+
+
+@router.get("/users", response_model=None)
+async def list_users(current_user: CurrentUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    users = await user_service.list_users(db)
+    items = [jsonable_encoder(UserListItem.model_validate(u)) for u in users]
+    return {"success": True, "message": "Users fetched", "data": items}
+
+
+@router.post("/users", response_model=None)
+async def invite_user(payload: InviteUserSchema, current_user: CurrentUser = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    data, error = await user_service.invite_user(db, payload)
+    if error:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"success": False, "message": error, "error": None})
+    return {"success": True, "message": InfoMessage.user_created, "data": jsonable_encoder(data)}
+
 
 @router.get("/get-notifications")
 async def get_notifications(current_user: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> FastAPIResponse:

@@ -66,6 +66,59 @@ class CreateNotificationSchema(BaseModel):
     message: str
     is_seen: bool = False
 
+
+# ---------------------------- SMTP settings ----------------------------- #
+
+class SmtpSettingsUpdate(BaseModel):
+    """Per-user SMTP config. `password` optional so re-saving keeps the stored one."""
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from_email: Optional[str] = None
+    smtp_from_name: Optional[str] = None
+    # IMAP / reply detection (login reuses the SMTP username + password)
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    reply_scan_enabled: Optional[bool] = None
+
+
+class SmtpSettingsResponse(BaseModel):
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_username: Optional[str] = None
+    smtp_from_email: Optional[str] = None
+    smtp_from_name: Optional[str] = None
+    password_set: bool = False
+    # Only populated when explicitly revealed (?reveal=true)
+    smtp_password: Optional[str] = None
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    reply_scan_enabled: bool = False
+
+
+# ---------------------------- Admin: users ------------------------------ #
+
+class InviteUserSchema(BaseModel):
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: str = "user"
+    password: Optional[str] = None  # if omitted, a temp password is generated
+
+
+class UserListItem(BaseModel):
+    id: uuid.UUID
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: str = "user"
+    last_loggedin_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 # Response schemas for API responses
 class CurrentUser(BaseModel):
     """User model for authentication context - doesn't include sensitive fields"""

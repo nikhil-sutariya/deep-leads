@@ -3,6 +3,7 @@ Campaign business logic: email helpers, tracking, send, follow-ups.
 """
 import uuid
 from datetime import datetime, timedelta
+from email.utils import make_msgid
 from typing import List, Optional, Tuple
 
 from loguru import logger
@@ -13,12 +14,15 @@ from app.core.config import get_settings
 from app.models.lead import CampaignDB, CampaignEmailDB, LeadDB
 from app.schemas.lead import (
     Campaign,
+    CampaignAttachment,
     CampaignEmail,
     CampaignStatus,
     Lead,
     LeadStatus,
 )
+from app.services import attachment_service
 from app.services.lead_service import LeadService
+from app.services.user_service import UserService
 from app.utils.send_email import send_campaign_email
 
 
@@ -47,6 +51,9 @@ def campaign_db_to_schema(db_campaign: CampaignDB) -> Campaign:
         send_from_email=db_campaign.send_from_email,
         send_from_name=db_campaign.send_from_name,
         follow_up_days=db_campaign.follow_up_days,
+        send_timezone=db_campaign.send_timezone,
+        min_delay_seconds=db_campaign.min_delay_seconds,
+        max_delay_seconds=db_campaign.max_delay_seconds,
         total_leads=db_campaign.total_leads or 0,
         emails_sent=db_campaign.emails_sent or 0,
         emails_opened=db_campaign.emails_opened or 0,
@@ -57,7 +64,9 @@ def campaign_db_to_schema(db_campaign: CampaignDB) -> Campaign:
 
 
 def campaign_email_db_to_schema(
-    email: CampaignEmailDB, lead_name: Optional[str] = None
+    email: CampaignEmailDB,
+    lead_name: Optional[str] = None,
+    attachments: Optional[List] = None,
 ) -> CampaignEmail:
     return CampaignEmail(
         id=email.id,
@@ -75,6 +84,7 @@ def campaign_email_db_to_schema(
         bounced_at=email.bounced_at,
         follow_up_number=email.follow_up_number or 0,
         error_message=email.error_message,
+        attachments=[CampaignAttachment.model_validate(a) for a in (attachments or [])],
     )
 
 
@@ -90,26 +100,45 @@ async def send_single_campaign_email(
     *,
     simulate_only: bool = False,
 ) -> bool:
-    """Send one campaign email and update lead/campaign stats."""
-    settings = get_settings()
-
+    """Send one campaign email using the campaign owner's SMTP, updating stats."""
     if email.sent_at:
         return True
 
     pixel_url = tracking_pixel_url(email.tracking_id) if email.tracking_id else None
 
+    attachments = attachment_service.to_email_payload(
+        await attachment_service.resolve_for_email(db, db_campaign.id, email.id)
+    )
+
+    # Per-user SMTP only: load the campaign owner's saved config.
+    smtp = None
+    if db_campaign.user_id:
+        smtp = await UserService().get_decrypted_smtp(db, db_campaign.user_id)
+
+    # A stable Message-ID lets the reply scanner match inbound replies to this email.
+    from_email_for_msgid = db_campaign.send_from_email or (smtp["from_email"] if smtp else None)
+    msgid_domain = from_email_for_msgid.split("@")[-1] if from_email_for_msgid and "@" in from_email_for_msgid else None
+    message_id = make_msgid(domain=msgid_domain) if msgid_domain else make_msgid()
+
     try:
-        if simulate_only or not (settings.smtp_username and settings.smtp_password):
-            logger.info(f"[simulated] Sending to {email.recipient_email}: {email.subject}")
+        if simulate_only or not smtp:
+            note = f" (+{len(attachments)} attachment(s))" if attachments else ""
+            logger.info(f"[simulated] Sending to {email.recipient_email}: {email.subject}{note}")
             success = True
         else:
             success = send_campaign_email(
                 to_email=email.recipient_email,
                 subject=email.subject or "",
                 body=email.body or "",
-                from_email=db_campaign.send_from_email or "",
-                from_name=db_campaign.send_from_name or "",
+                from_email=db_campaign.send_from_email or smtp["from_email"],
+                from_name=db_campaign.send_from_name or smtp["from_name"],
                 tracking_pixel_url=pixel_url,
+                attachments=attachments or None,
+                smtp_host=smtp["host"],
+                smtp_port=smtp["port"],
+                smtp_username=smtp["username"],
+                smtp_password=smtp["password"],
+                message_id=message_id,
             )
     except Exception as e:
         email.error_message = str(e)
@@ -119,6 +148,9 @@ async def send_single_campaign_email(
 
     if success:
         email.sent_at = datetime.utcnow()
+        # Record the Message-ID only for real sends so replies can be matched later.
+        if smtp and not simulate_only:
+            email.message_id = message_id
         db_campaign.emails_sent = (db_campaign.emails_sent or 0) + 1
 
         lead_result = await db.execute(select(LeadDB).where(LeadDB.id == email.lead_id))

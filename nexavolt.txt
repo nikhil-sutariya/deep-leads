@@ -1,0 +1,22 @@
+Campaign name
+Join Nexavolt - Where the world does business
+
+Description
+Join a unified global business ecosystem where manufacturers, suppliers, distributors, exporters, and buyers connect, collaborate, and grow. 
+From trusted networking through Nexavolt Network to sourcing on Nexavolt Marketplace and relationship-building with Nexavolt Connect, everything your business needs is now in one platform.
+
+
+Email template
+Subject - Invited to join Nexavolt {company_name}
+
+Body:
+Hello {contact_name},
+
+I noticed {company_name} is doing great work in {industry}. I'd love to share that we just launched Nexavolt. 
+Nexavolt brings together powerful business networking, global sourcing, strategic partnerships, and verified industry connections within a single ecosystem. We invite you to join Nexavolt and unlock new opportunities through Nexavolt Network, Marketplace, and Connect.
+
+Would you be open to a short call next week?
+
+Best,
+Nikhil Sutariya - Co-founder & CTO  
+Nexavolt - https://nexavolt.global

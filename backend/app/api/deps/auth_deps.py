@@ -77,6 +77,13 @@ async def get_current_user_from_token(access_token: str, db: AsyncSession) -> Cu
 	)
 
 
+async def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+	"""Dependency that allows only admins through."""
+	if current_user.role != "admin":
+		raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+	return current_user
+
+
 async def verify_refresh_token(token: Optional[str]) -> Optional[dict]:
 	"""
 	Validate refresh token structure and expiry.

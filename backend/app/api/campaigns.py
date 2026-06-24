@@ -3,9 +3,11 @@ API endpoints for email campaign management
 """
 import uuid
 from datetime import datetime
-from typing import List
+from typing import List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from loguru import logger
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,18 +16,23 @@ from app.agents.email_campaign_agent import EmailCampaignAgent
 from app.api.deps.auth_deps import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models.lead import CampaignDB, CampaignEmailDB, LeadDB
+from app.models.lead import CampaignAttachmentDB, CampaignDB, CampaignEmailDB, LeadDB
 from app.schemas.lead import (
     Campaign,
+    CampaignAttachment,
     CampaignCreate,
     CampaignEmail,
     CampaignEmailListResponse,
     CampaignEmailUpdate,
     CampaignMetrics,
     CampaignResponse,
+    CampaignScheduleRequest,
     CampaignStatus,
 )
 from app.schemas.user import CurrentUser
+from app.services import attachment_service
+from app.services.attachment_service import AttachmentError
+from app.services.campaign_sender import request_campaign_send
 from app.services.campaign_service import (
     campaign_db_to_schema,
     campaign_email_db_to_schema,
@@ -97,6 +104,9 @@ async def create_campaign(
             send_from_name=campaign_create.send_from_name,
             follow_up_days=campaign_create.follow_up_days,
             scheduled_at=campaign_create.schedule_at,
+            send_timezone=campaign_create.send_timezone,
+            min_delay_seconds=campaign_create.min_delay_seconds,
+            max_delay_seconds=campaign_create.max_delay_seconds,
             total_leads=len(leads),
         )
 
@@ -188,8 +198,21 @@ async def list_campaign_emails(
         .order_by(CampaignEmailDB.follow_up_number, LeadDB.company_name)
     )
     rows = result.all()
+
+    # Per-email attachments (campaign-wide + email-specific) for the editor view.
+    all_attachments = await attachment_service.list_attachments(db, campaign_uuid)
+    campaign_wide = [a for a in all_attachments if a.email_id is None]
+    by_email: dict = {}
+    for a in all_attachments:
+        if a.email_id is not None:
+            by_email.setdefault(a.email_id, []).append(a)
+
     emails = [
-        campaign_email_db_to_schema(email, lead_name=name)
+        campaign_email_db_to_schema(
+            email,
+            lead_name=name,
+            attachments=campaign_wide + by_email.get(email.id, []),
+        )
         for email, name in rows
     ]
     return CampaignEmailListResponse(emails=emails, total=len(emails))
@@ -228,8 +251,11 @@ async def update_campaign_email(
 
     lead_result = await db.execute(select(LeadDB).where(LeadDB.id == email.lead_id))
     lead_name = lead_result.scalars().first()
+    atts = await attachment_service.resolve_for_email(db, campaign_uuid, email.id)
     return campaign_email_db_to_schema(
-        email, lead_name=lead_name.company_name if lead_name else None
+        email,
+        lead_name=lead_name.company_name if lead_name else None,
+        attachments=atts,
     )
 
 
@@ -280,7 +306,8 @@ async def regenerate_campaign_email(
 
     await db.commit()
     await db.refresh(email)
-    return campaign_email_db_to_schema(email, lead_name=db_lead.company_name)
+    atts = await attachment_service.resolve_for_email(db, campaign_uuid, email.id)
+    return campaign_email_db_to_schema(email, lead_name=db_lead.company_name, attachments=atts)
 
 
 @router.post("/{campaign_id}/send")
@@ -289,54 +316,101 @@ async def send_campaign(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Launch campaign — sends all unsent initial emails via SMTP when configured."""
+    """Send now — starts a background worker that paces emails (random delay)."""
     campaign_uuid = uuid.UUID(campaign_id)
     db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
 
     if db_campaign.status == CampaignStatus.RUNNING:
         raise HTTPException(status_code=400, detail="Campaign already running")
 
-    result_emails = await db.execute(
+    count_result = await db.execute(
         select(CampaignEmailDB).where(
             CampaignEmailDB.campaign_id == campaign_uuid,
             CampaignEmailDB.follow_up_number == 0,
+            CampaignEmailDB.sent_at.is_(None),
         )
     )
-    campaign_emails = result_emails.scalars().all()
-
-    if not campaign_emails:
-        raise HTTPException(status_code=400, detail="No emails in campaign")
+    pending = count_result.scalars().all()
+    if not pending:
+        raise HTTPException(status_code=400, detail="No unsent emails in campaign")
 
     db_campaign.status = CampaignStatus.RUNNING
-    db_campaign.started_at = datetime.utcnow()
-
-    smtp_ready = bool(settings.smtp_username and settings.smtp_password)
-    sent_count = 0
-
-    for email in campaign_emails:
-        if email.sent_at:
-            sent_count += 1
-            continue
-        ok = await send_single_campaign_email(
-            db, db_campaign, email, simulate_only=not smtp_ready
-        )
-        if ok:
-            sent_count += 1
-
-    if sent_count >= len(campaign_emails):
-        db_campaign.emails_sent = sent_count
-
+    db_campaign.started_at = db_campaign.started_at or datetime.utcnow()
     await db.commit()
 
+    # Kick off the background sender (paces emails with the configured delay).
+    request_campaign_send(campaign_uuid)
+
+    from app.services.user_service import UserService
+    smtp = await UserService().get_decrypted_smtp(db, current_user.id)
     note = (
-        "Emails sent via SMTP."
-        if smtp_ready
-        else "SMTP not configured — emails marked sent in demo mode. Set SMTP_* in .env for real delivery."
+        "Sending started in the background; emails are paced to avoid spam filters."
+        if smtp
+        else "Your SMTP isn't configured — emails will be simulated. Add it in Settings → Email for real delivery."
     )
     return {
-        "message": f"Campaign launched. {sent_count} emails sent.",
+        "message": f"Campaign started. {len(pending)} emails queued for sending.",
         "note": note,
     }
+
+
+@router.post("/{campaign_id}/schedule", response_model=CampaignResponse)
+async def schedule_campaign(
+    campaign_id: str,
+    body: CampaignScheduleRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Schedule sending to begin at a wall-clock time in a chosen timezone.
+
+    e.g. 5:00 PM Asia/Kolkata — the background scheduler flips the campaign to
+    RUNNING once that moment (converted to UTC) has passed.
+    """
+    campaign_uuid = uuid.UUID(campaign_id)
+    db_campaign = await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    if db_campaign.status == CampaignStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Campaign already running")
+
+    try:
+        tz = ZoneInfo(body.send_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise HTTPException(status_code=400, detail=f"Unknown timezone: {body.send_timezone}")
+
+    try:
+        local_dt = datetime.fromisoformat(body.scheduled_local)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid scheduled time format")
+
+    # Localize then convert to a naive UTC datetime (matches how we store/compare).
+    aware_local = local_dt.replace(tzinfo=tz)
+    scheduled_utc = aware_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+    has_emails = (
+        await db.execute(
+            select(CampaignEmailDB).where(
+                CampaignEmailDB.campaign_id == campaign_uuid,
+                CampaignEmailDB.follow_up_number == 0,
+            )
+        )
+    ).scalars().first()
+    if not has_emails:
+        raise HTTPException(status_code=400, detail="No emails in campaign")
+
+    db_campaign.scheduled_at = scheduled_utc
+    db_campaign.send_timezone = body.send_timezone
+    if body.min_delay_seconds is not None:
+        db_campaign.min_delay_seconds = body.min_delay_seconds
+    if body.max_delay_seconds is not None:
+        db_campaign.max_delay_seconds = body.max_delay_seconds
+    db_campaign.status = CampaignStatus.SCHEDULED
+    await db.commit()
+    await db.refresh(db_campaign)
+
+    return CampaignResponse(
+        campaign=campaign_db_to_schema(db_campaign),
+        message=f"Campaign scheduled for {body.scheduled_local} {body.send_timezone}",
+    )
 
 
 @router.get("/{campaign_id}/metrics", response_model=CampaignMetrics)
@@ -398,6 +472,9 @@ async def resume_campaign(
 
     db_campaign.status = CampaignStatus.RUNNING
     await db.commit()
+
+    # Restart the background worker for any remaining unsent emails.
+    request_campaign_send(campaign_uuid)
     return {"message": "Campaign resumed successfully"}
 
 
@@ -418,6 +495,9 @@ async def delete_campaign(
         )
 
     await db.execute(
+        delete(CampaignAttachmentDB).where(CampaignAttachmentDB.campaign_id == campaign_uuid)
+    )
+    await db.execute(
         delete(CampaignEmailDB).where(CampaignEmailDB.campaign_id == campaign_uuid)
     )
     await db.delete(db_campaign)
@@ -425,3 +505,96 @@ async def delete_campaign(
 
     logger.info(f"Deleted campaign {campaign_id}")
     return {"message": "Campaign deleted successfully"}
+
+
+# ------------------------------- Attachments ------------------------------- #
+
+
+@router.get("/{campaign_id}/attachments", response_model=List[CampaignAttachment])
+async def list_campaign_attachments(
+    campaign_id: str,
+    email_id: Optional[str] = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List attachments. With no `email_id`, returns all (campaign-wide + per-email)."""
+    campaign_uuid = uuid.UUID(campaign_id)
+    await _get_owned_campaign(db, campaign_uuid, current_user.id)
+    email_uuid = uuid.UUID(email_id) if email_id else None
+    records = await attachment_service.list_attachments(db, campaign_uuid, email_id=email_uuid)
+    return [CampaignAttachment.model_validate(r) for r in records]
+
+
+@router.post("/{campaign_id}/attachments", response_model=CampaignAttachment)
+async def upload_campaign_attachment(
+    campaign_id: str,
+    file: UploadFile = File(...),
+    email_id: Optional[str] = Form(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a file. Omit `email_id` for a campaign-wide attachment (all emails)."""
+    campaign_uuid = uuid.UUID(campaign_id)
+    await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    email_uuid: Optional[uuid.UUID] = None
+    if email_id:
+        email_uuid = uuid.UUID(email_id)
+        owns = await db.execute(
+            select(CampaignEmailDB).where(
+                CampaignEmailDB.id == email_uuid,
+                CampaignEmailDB.campaign_id == campaign_uuid,
+            )
+        )
+        if not owns.scalars().first():
+            raise HTTPException(status_code=404, detail="Email not found")
+
+    try:
+        record = await attachment_service.save_attachment(db, campaign_uuid, file, email_uuid)
+    except AttachmentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return CampaignAttachment.model_validate(record)
+
+
+@router.get("/{campaign_id}/attachments/{attachment_id}/download")
+async def download_campaign_attachment(
+    campaign_id: str,
+    attachment_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    campaign_uuid = uuid.UUID(campaign_id)
+    await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    result = await db.execute(
+        select(CampaignAttachmentDB).where(
+            CampaignAttachmentDB.id == uuid.UUID(attachment_id),
+            CampaignAttachmentDB.campaign_id == campaign_uuid,
+        )
+    )
+    record = result.scalars().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    return FileResponse(
+        record.stored_path,
+        filename=record.filename,
+        media_type=record.content_type or "application/octet-stream",
+    )
+
+
+@router.delete("/{campaign_id}/attachments/{attachment_id}")
+async def delete_campaign_attachment(
+    campaign_id: str,
+    attachment_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    campaign_uuid = uuid.UUID(campaign_id)
+    await _get_owned_campaign(db, campaign_uuid, current_user.id)
+
+    ok = await attachment_service.delete_attachment(db, campaign_uuid, uuid.UUID(attachment_id))
+    if not ok:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return {"message": "Attachment deleted"}

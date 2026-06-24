@@ -8,8 +8,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 from loguru import logger
 
+from sqlalchemy import extract
+
 from app.core.database import get_db
-from app.models.lead import LeadDB
+from app.models.lead import LeadDB, CampaignDB, CampaignEmailDB
 from app.schemas.lead import LeadStatus
 from app.api.deps.auth_deps import get_current_user
 from app.schemas.user import CurrentUser
@@ -174,5 +176,150 @@ async def get_dashboard_trends(
 
     except Exception as e:
         logger.error(f"Error getting dashboard trends: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _rate(numerator: int, denominator: int) -> float:
+    return round((numerator / denominator) * 100, 1) if denominator else 0.0
+
+
+@router.get("/analytics")
+async def get_analytics(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Outreach analytics: lead funnel, email performance, and breakdowns."""
+    try:
+        uid = current_user.id
+        owns_lead = LeadDB.user_id == uid
+        owns_campaign = CampaignDB.user_id == uid
+
+        # --- Lead funnel by status ---
+        status_rows = (
+            await db.execute(
+                select(LeadDB.status, func.count()).where(owns_lead).group_by(LeadDB.status)
+            )
+        ).all()
+        counts = {}
+        for st, c in status_rows:
+            counts[st.value if hasattr(st, "value") else str(st)] = c
+        funnel_order = [
+            ("discovered", "Discovered"),
+            ("enriched", "Enriched"),
+            ("qualified", "Qualified"),
+            ("contacted", "Contacted"),
+            ("responded", "Responded"),
+            ("converted", "Converted"),
+        ]
+        funnel = [{"stage": label, "key": key, "count": counts.get(key, 0)} for key, label in funnel_order]
+
+        # --- Email performance (sum of per-campaign stats) ---
+        totals = (
+            await db.execute(
+                select(
+                    func.coalesce(func.sum(CampaignDB.emails_sent), 0),
+                    func.coalesce(func.sum(CampaignDB.emails_opened), 0),
+                    func.coalesce(func.sum(CampaignDB.emails_clicked), 0),
+                    func.coalesce(func.sum(CampaignDB.emails_replied), 0),
+                    func.coalesce(func.sum(CampaignDB.emails_bounced), 0),
+                ).where(owns_campaign)
+            )
+        ).one()
+        sent, opened, clicked, replied, bounced = (int(x) for x in totals)
+        email_performance = {
+            "sent": sent,
+            "opened": opened,
+            "clicked": clicked,
+            "replied": replied,
+            "bounced": bounced,
+            "open_rate": _rate(opened, sent),
+            "click_rate": _rate(clicked, sent),
+            "reply_rate": _rate(replied, sent),
+            "bounce_rate": _rate(bounced, sent),
+        }
+
+        # --- Top subjects by open rate (min 1 send) ---
+        subj_rows = (
+            await db.execute(
+                select(
+                    CampaignEmailDB.subject,
+                    func.count(CampaignEmailDB.sent_at),
+                    func.count(CampaignEmailDB.opened_at),
+                )
+                .join(CampaignDB, CampaignEmailDB.campaign_id == CampaignDB.id)
+                .where(owns_campaign, CampaignEmailDB.subject.isnot(None), CampaignEmailDB.sent_at.isnot(None))
+                .group_by(CampaignEmailDB.subject)
+            )
+        ).all()
+        top_subjects = sorted(
+            (
+                {"subject": s, "sends": int(snd), "opens": int(op), "open_rate": _rate(int(op), int(snd))}
+                for s, snd, op in subj_rows
+            ),
+            key=lambda r: (r["open_rate"], r["sends"]),
+            reverse=True,
+        )[:5]
+
+        # --- Reply rate by country / industry ---
+        async def breakdown(col):
+            rows = (
+                await db.execute(
+                    select(col, func.count(CampaignEmailDB.sent_at), func.count(CampaignEmailDB.replied_at))
+                    .select_from(CampaignEmailDB)
+                    .join(CampaignDB, CampaignEmailDB.campaign_id == CampaignDB.id)
+                    .join(LeadDB, CampaignEmailDB.lead_id == LeadDB.id)
+                    .where(owns_campaign, col.isnot(None), CampaignEmailDB.sent_at.isnot(None))
+                    .group_by(col)
+                )
+            ).all()
+            data = [
+                {"label": v, "sent": int(snd), "replied": int(rep), "reply_rate": _rate(int(rep), int(snd))}
+                for v, snd, rep in rows
+            ]
+            return sorted(data, key=lambda r: r["sent"], reverse=True)[:8]
+
+        by_country = await breakdown(LeadDB.country)
+        by_industry = await breakdown(LeadDB.industry)
+
+        # --- Best send hour (UTC) by open rate ---
+        hour_rows = (
+            await db.execute(
+                select(
+                    extract("hour", CampaignEmailDB.sent_at),
+                    func.count(CampaignEmailDB.sent_at),
+                    func.count(CampaignEmailDB.opened_at),
+                )
+                .join(CampaignDB, CampaignEmailDB.campaign_id == CampaignDB.id)
+                .where(owns_campaign, CampaignEmailDB.sent_at.isnot(None))
+                .group_by(extract("hour", CampaignEmailDB.sent_at))
+            )
+        ).all()
+        best_send_hours = sorted(
+            (
+                {"hour": int(h), "sends": int(snd), "opens": int(op), "open_rate": _rate(int(op), int(snd))}
+                for h, snd, op in hour_rows
+                if h is not None
+            ),
+            key=lambda r: r["hour"],
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "message": "Analytics fetched",
+                "data": {
+                    "funnel": funnel,
+                    "email_performance": email_performance,
+                    "top_subjects": top_subjects,
+                    "by_country": by_country,
+                    "by_industry": by_industry,
+                    "best_send_hours": best_send_hours,
+                },
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting analytics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
