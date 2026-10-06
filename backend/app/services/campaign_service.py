@@ -26,7 +26,24 @@ from app.services.user_service import UserService
 from app.utils.send_email import send_campaign_email
 
 
-def resolve_recipient(lead: Lead) -> Tuple[Optional[str], Optional[str]]:
+def resolve_recipient(
+    lead: Lead, preferred_email: Optional[str] = None
+) -> Tuple[Optional[str], Optional[str]]:
+    """Pick the recipient for a lead.
+
+    When the user chose a specific address (``preferred_email``), use it and
+    attach the decision-maker's name if the address belongs to one. Otherwise
+    fall back to the first decision-maker email, then the company email.
+    """
+    if preferred_email:
+        preferred_email = preferred_email.strip()
+        if preferred_email:
+            if lead.enrichment_data and lead.enrichment_data.decision_makers:
+                for dm in lead.enrichment_data.decision_makers:
+                    if dm.email and dm.email.strip().lower() == preferred_email.lower():
+                        return dm.email.strip(), dm.name
+            return preferred_email, None
+
     if lead.enrichment_data and lead.enrichment_data.decision_makers:
         dm = lead.enrichment_data.decision_makers[0]
         if dm.email:

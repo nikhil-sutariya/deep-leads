@@ -161,6 +161,8 @@ export interface CampaignEmail {
 export interface CampaignCreatePayload {
   name: string;
   lead_ids: string[];
+  /** Per-lead chosen recipient email (lead_id → email). */
+  recipient_overrides?: Record<string, string>;
   campaign_goal: string;
   email_template: EmailTemplate;
   send_from_email: string;

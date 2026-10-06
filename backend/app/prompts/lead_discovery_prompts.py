@@ -214,6 +214,23 @@ def build_multi_angle_queries(params: dict) -> list:
 
 
 
+def build_follow_up_discovery_prompt(
+    original_prompt: str,
+    exclude_companies: list,
+    remaining: int,
+) -> str:
+    """Second-pass prompt: same criteria, but skip companies already found."""
+    excluded = "\n".join(f"- {name}" for name in exclude_companies if name)
+    return f"""{original_prompt}
+
+ADDITIONAL INSTRUCTIONS FOR THIS PASS:
+A previous search already found the companies listed below. Find up to {remaining}
+DIFFERENT companies that match the same criteria. Do NOT include any company from
+this list (or an obvious subsidiary/rebrand of one):
+{excluded}
+"""
+
+
 def build_extraction_prompt(discovery_response: str) -> str:
     return f"""
 Extract structured company data from the following text.

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     
     # Provider Configuration
     ai_provider: str = "gemini"  # Options: "gemini" or "perplexity"
+
+    # Gemini model selection (override via env: GEMINI_SEARCH_MODEL / GEMINI_FAST_MODEL)
+    gemini_search_model: str = "gemini-2.5-flash"  # grounded web-search discovery
+    gemini_fast_model: str = "gemini-2.5-flash-lite"  # extraction / cheap structured calls
     
     # Database
     database_url: str = "postgresql://user:password@localhost:5432/leadfinder"

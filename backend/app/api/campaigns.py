@@ -120,12 +120,16 @@ async def create_campaign(
             template_dict,
         )
 
+        recipient_overrides = campaign_create.recipient_overrides or {}
+
         for email_data in emails:
             lead = next((l for l in leads if l.id == email_data["lead_id"]), None)
             if not lead:
                 continue
 
-            recipient_email, recipient_name = resolve_recipient(lead)
+            recipient_email, recipient_name = resolve_recipient(
+                lead, preferred_email=recipient_overrides.get(lead.id)
+            )
             tracking_id = str(uuid.uuid4())
 
             campaign_email = CampaignEmailDB(
@@ -246,6 +250,20 @@ async def update_campaign_email(
         email.subject = body.subject
     if body.body is not None:
         email.body = body.body
+    if body.recipient_email is not None:
+        new_recipient = body.recipient_email.strip()
+        if not new_recipient or "@" not in new_recipient:
+            raise HTTPException(status_code=400, detail="Invalid recipient email")
+        email.recipient_email = new_recipient
+        # Refresh the name: use the matching decision-maker's, if any.
+        lead_result = await db.execute(select(LeadDB).where(LeadDB.id == email.lead_id))
+        db_lead = lead_result.scalars().first()
+        if db_lead:
+            lead = LeadService._db_lead_to_schema(db_lead)
+            _, matched_name = resolve_recipient(lead, preferred_email=new_recipient)
+            email.recipient_name = matched_name
+    if body.recipient_name is not None:
+        email.recipient_name = body.recipient_name.strip() or None
     await db.commit()
     await db.refresh(email)
 
@@ -298,11 +316,14 @@ async def regenerate_campaign_email(
     email.subject = content.get("subject", email.subject)
     email.body = content.get("body", email.body)
 
-    recipient_email, recipient_name = resolve_recipient(lead)
-    if recipient_email:
-        email.recipient_email = recipient_email
-    if recipient_name:
-        email.recipient_name = recipient_name
+    # Only fill in the recipient when it was never resolved — regenerating the
+    # content must not overwrite an address the user picked or edited.
+    if not email.recipient_email or email.recipient_email == "unknown@example.com":
+        recipient_email, recipient_name = resolve_recipient(lead)
+        if recipient_email:
+            email.recipient_email = recipient_email
+        if recipient_name:
+            email.recipient_name = recipient_name
 
     await db.commit()
     await db.refresh(email)

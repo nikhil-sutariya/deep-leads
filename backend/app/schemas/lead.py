@@ -276,6 +276,11 @@ class CampaignCreate(BaseModel):
     """Create email campaign"""
     name: str
     lead_ids: List[uuid.UUID]
+    recipient_overrides: Optional[Dict[uuid.UUID, str]] = Field(
+        None,
+        description="Per-lead recipient email chosen in the UI (lead_id → email). "
+        "Leads not present fall back to automatic resolution.",
+    )
     email_template: EmailTemplate
     campaign_goal: str = Field(
         ...,
@@ -386,6 +391,8 @@ class CampaignEmail(BaseModel):
 class CampaignEmailUpdate(BaseModel):
     subject: Optional[str] = None
     body: Optional[str] = None
+    recipient_email: Optional[str] = None
+    recipient_name: Optional[str] = None
 
 
 class CampaignScheduleRequest(BaseModel):

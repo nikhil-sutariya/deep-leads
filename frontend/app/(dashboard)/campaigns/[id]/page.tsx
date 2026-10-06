@@ -30,6 +30,7 @@ export default function CampaignDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editSubject, setEditSubject] = useState("");
   const [editBody, setEditBody] = useState("");
+  const [editRecipient, setEditRecipient] = useState("");
 
   // Scheduling
   const [showSchedule, setShowSchedule] = useState(false);
@@ -85,7 +86,8 @@ export default function CampaignDetailPage() {
     setEditing(false);
     setEditSubject(selectedEmail?.subject ?? "");
     setEditBody(selectedEmail?.body ?? "");
-  }, [selectedEmailId, selectedEmail?.subject, selectedEmail?.body]);
+    setEditRecipient(selectedEmail?.recipient_email ?? "");
+  }, [selectedEmailId, selectedEmail?.subject, selectedEmail?.body, selectedEmail?.recipient_email]);
 
   async function refreshAttachments() {
     const res = await api.get<CampaignAttachment[]>(`/campaigns/${params.id}/attachments`);
@@ -179,7 +181,7 @@ export default function CampaignDetailPage() {
     try {
       const res = await api.patch<CampaignEmail>(
         `/campaigns/${params.id}/emails/${selectedEmail.id}`,
-        { subject: editSubject, body: editBody }
+        { subject: editSubject, body: editBody, recipient_email: editRecipient }
       );
       setEmails((prev) => prev.map((e) => (e.id === selectedEmail.id ? res.data : e)));
       setEditing(false);
@@ -463,20 +465,30 @@ export default function CampaignDetailPage() {
           {selectedEmail ? (
             <div className="space-y-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-xs text-subtle">To</p>
-                  <p className="text-sm text-foreground truncate">
-                    {selectedEmail.recipient_name
-                      ? `${selectedEmail.recipient_name} <${selectedEmail.recipient_email}>`
-                      : selectedEmail.recipient_email}
-                  </p>
+                  {editing ? (
+                    <input
+                      type="email"
+                      value={editRecipient}
+                      onChange={(e) => setEditRecipient(e.target.value)}
+                      className="w-full max-w-sm bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-foreground"
+                      placeholder="recipient@company.com"
+                    />
+                  ) : (
+                    <p className="text-sm text-foreground truncate">
+                      {selectedEmail.recipient_name
+                        ? `${selectedEmail.recipient_name} <${selectedEmail.recipient_email}>`
+                        : selectedEmail.recipient_email}
+                    </p>
+                  )}
                 </div>
                 {!selectedEmail.sent_at && (
                   <div className="flex items-center gap-3 flex-shrink-0">
                     {editing ? (
                       <>
                         <button onClick={handleSaveEmail} disabled={busy} className="cursor-pointer text-xs text-emerald-400 hover:underline disabled:opacity-50">Save</button>
-                        <button onClick={() => { setEditing(false); setEditSubject(selectedEmail.subject ?? ""); setEditBody(selectedEmail.body ?? ""); }} className="cursor-pointer text-xs text-muted hover:underline">Cancel</button>
+                        <button onClick={() => { setEditing(false); setEditSubject(selectedEmail.subject ?? ""); setEditBody(selectedEmail.body ?? ""); setEditRecipient(selectedEmail.recipient_email ?? ""); }} className="cursor-pointer text-xs text-muted hover:underline">Cancel</button>
                       </>
                     ) : (
                       <>

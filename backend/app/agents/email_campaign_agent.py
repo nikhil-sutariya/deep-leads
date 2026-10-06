@@ -230,7 +230,7 @@ class EmailCampaignAgent:
         )
         
         response = self.client.models.generate_content(
-            model="gemini-2.5-flash-lite",
+            model=self.settings.gemini_fast_model,
             contents=prompt,
             config=config
         )

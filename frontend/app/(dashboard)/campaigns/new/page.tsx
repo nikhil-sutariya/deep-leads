@@ -7,6 +7,26 @@ import { ApiEnvelope, CampaignCreatePayload, Lead, LeadListResponse, LeadStatus 
 import StatusBadge from "@/components/StatusBadge";
 import { TIMEZONES, DEFAULT_TIMEZONE } from "@/lib/timezones";
 
+type EmailOption = { email: string; label: string };
+
+/** All known email addresses for a lead: decision makers first, then the company email. */
+function emailOptions(lead: Lead): EmailOption[] {
+  const opts: EmailOption[] = [];
+  const seen = new Set<string>();
+  for (const dm of lead.enrichment_data?.decision_makers ?? []) {
+    const em = dm.email?.trim();
+    if (em && !seen.has(em.toLowerCase())) {
+      seen.add(em.toLowerCase());
+      opts.push({ email: em, label: dm.name ? `${dm.name} — ${em}` : em });
+    }
+  }
+  const company = lead.company_info.email?.trim();
+  if (company && !seen.has(company.toLowerCase())) {
+    opts.push({ email: company, label: `Company — ${company}` });
+  }
+  return opts;
+}
+
 function NewCampaignForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -14,6 +34,7 @@ function NewCampaignForm() {
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set(preselected));
+  const [recipients, setRecipients] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -51,6 +72,18 @@ function NewCampaignForm() {
     });
   }
 
+  const visibleIds = leads.map((l) => l.id).filter(Boolean) as string[];
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  function toggleSelectAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (selected.size === 0) {
@@ -65,9 +98,19 @@ function NewCampaignForm() {
         .map((d) => parseInt(d.trim(), 10))
         .filter((n) => !isNaN(n));
 
+      // Recipient per lead: explicit pick, else the lead's first known email.
+      const recipientOverrides: Record<string, string> = {};
+      for (const id of selected) {
+        const lead = leads.find((l) => l.id === id);
+        if (!lead) continue;
+        const chosen = recipients[id] ?? emailOptions(lead)[0]?.email;
+        if (chosen) recipientOverrides[id] = chosen;
+      }
+
       const payload: CampaignCreatePayload = {
         name,
         lead_ids: Array.from(selected),
+        recipient_overrides: recipientOverrides,
         campaign_goal: campaignGoal,
         email_template: { subject_line: subjectLine, body: bodyTemplate },
         send_from_email: fromEmail,
@@ -232,20 +275,32 @@ function NewCampaignForm() {
         </div>
 
         <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="p-5 border-b border-border flex items-center justify-between">
+          <div className="p-5 border-b border-border flex items-center justify-between gap-3">
             <h2 className="text-sm font-medium text-muted uppercase tracking-wide">
               Select leads ({selected.size} selected)
             </h2>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as LeadStatus | "")}
-              className="bg-background border border-border rounded-lg px-2 py-1 text-xs text-foreground"
-            >
-              <option value="">All</option>
-              <option value="enriched">Enriched</option>
-              <option value="discovered">Discovered</option>
-              <option value="qualified">Qualified</option>
-            </select>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-xs text-muted cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={toggleSelectAll}
+                  disabled={loading || visibleIds.length === 0}
+                  className="rounded border-border"
+                />
+                Select all ({visibleIds.length})
+              </label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as LeadStatus | "")}
+                className="bg-background border border-border rounded-lg px-2 py-1 text-xs text-foreground"
+              >
+                <option value="">All</option>
+                <option value="enriched">Enriched</option>
+                <option value="discovered">Discovered</option>
+                <option value="qualified">Qualified</option>
+              </select>
+            </div>
           </div>
           {loading ? (
             <div className="flex justify-center py-12">
@@ -253,24 +308,48 @@ function NewCampaignForm() {
             </div>
           ) : (
             <div className="max-h-80 overflow-y-auto divide-y divide-border">
-              {leads.map((lead) => (
-                <label
-                  key={lead.id}
-                  className="flex items-center gap-3 px-5 py-3 hover:bg-hover/30 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={lead.id ? selected.has(lead.id) : false}
-                    onChange={() => lead.id && toggleLead(lead.id)}
-                    className="rounded border-border"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{lead.company_info.name}</p>
-                    <p className="text-xs text-subtle">{lead.company_info.industry || "—"}</p>
-                  </div>
-                  <StatusBadge status={lead.status} />
-                </label>
-              ))}
+              {leads.map((lead) => {
+                const isSelected = lead.id ? selected.has(lead.id) : false;
+                const options = emailOptions(lead);
+                return (
+                  <label
+                    key={lead.id}
+                    className="flex items-center gap-3 px-5 py-3 hover:bg-hover/30 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => lead.id && toggleLead(lead.id)}
+                      className="rounded border-border"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{lead.company_info.name}</p>
+                      <p className="text-xs text-subtle">{lead.company_info.industry || "—"}</p>
+                    </div>
+                    {isSelected &&
+                      (options.length > 0 ? (
+                        <select
+                          value={lead.id ? recipients[lead.id] ?? options[0].email : options[0].email}
+                          onChange={(e) =>
+                            lead.id && setRecipients((prev) => ({ ...prev, [lead.id as string]: e.target.value }))
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                          title="Send this email to"
+                          className="max-w-[16rem] bg-background border border-border rounded-lg px-2 py-1 text-xs text-foreground truncate"
+                        >
+                          {options.map((o) => (
+                            <option key={o.email} value={o.email}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-xs text-amber-400 flex-shrink-0">No email found</span>
+                      ))}
+                    <StatusBadge status={lead.status} />
+                  </label>
+                );
+              })}
             </div>
           )}
         </div>

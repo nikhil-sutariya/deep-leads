@@ -18,7 +18,10 @@ from app.schemas.lead import (
     Lead,
     LeadStatus,
 )
-from app.prompts.lead_discovery_prompts import build_extraction_prompt
+from app.prompts.lead_discovery_prompts import (
+    build_extraction_prompt,
+    build_follow_up_discovery_prompt,
+)
 
 
 class LeadDiscoveryAgent:
@@ -57,11 +60,29 @@ class LeadDiscoveryAgent:
         """
         logger.info(f"Starting lead discovery — intent: {built_prompt.intent_summary}")
 
-        leads = self._run_search(built_prompt.discovery_prompt)
+        leads = self._dedupe_leads(
+            self._validate_leads(self._run_search(built_prompt.discovery_prompt))
+        )
 
-        validated_leads = self._validate_leads(leads)
-        final_leads = validated_leads[:max_results]
+        # Second pass when we're short of the target: retry as-is if the first
+        # pass failed outright, otherwise ask for different companies than the
+        # ones we already have.
+        if len(leads) < max_results:
+            if leads:
+                follow_up = build_follow_up_discovery_prompt(
+                    built_prompt.discovery_prompt,
+                    exclude_companies=[l.company_info.name for l in leads],
+                    remaining=max_results - len(leads),
+                )
+            else:
+                follow_up = built_prompt.discovery_prompt
+            logger.info(
+                f"First pass returned {len(leads)}/{max_results} leads — running a second pass"
+            )
+            more = self._validate_leads(self._run_search(follow_up))
+            leads = self._dedupe_leads(leads + more)
 
+        final_leads = leads[:max_results]
         logger.info(f"Discovery complete: Found {len(final_leads)} qualified leads")
         return final_leads
 
@@ -95,27 +116,36 @@ class LeadDiscoveryAgent:
             raise ValueError(f"Unsupported provider: {self.provider}")
         
     def _call_extraction_prompt(self, prompt: str) -> dict:
-        try:
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=prompt,
-            )
-            
-            text = response.text.strip()
+        last_error = None
+        for attempt in range(2):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.settings.gemini_fast_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                    ),
+                )
 
-            # Remove code fences if Gemini still adds them
-            if text.startswith("```"):
-                text = text.strip("`")
-                # typical: ```json\n ... \n```
-                if "json" in text.split("\n")[0]:
-                    text = "\n".join(text.split("\n")[1:])
-                if text.endswith("```"):
-                    text = text[:-3]
+                text = response.text.strip()
 
-            return json.loads(text)
+                # Remove code fences if Gemini still adds them
+                if text.startswith("```"):
+                    text = text.strip("`")
+                    # typical: ```json\n ... \n```
+                    if "json" in text.split("\n")[0]:
+                        text = "\n".join(text.split("\n")[1:])
+                    if text.endswith("```"):
+                        text = text[:-3]
 
-        except Exception as e:
-            raise RuntimeError(f"Extraction prompt failed: {e}")
+                return json.loads(text)
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Extraction attempt {attempt + 1} failed: {e}")
+
+        raise RuntimeError(f"Extraction prompt failed: {last_error}")
     
     def _call_gemini(self, prompt: str) -> Dict: # Changed return type hint for clarity
         """
@@ -133,7 +163,7 @@ class LeadDiscoveryAgent:
         for i in range(3): 
             try:
                 response = self.client.models.generate_content(
-                    model="gemini-2.5-flash-lite", 
+                    model=self.settings.gemini_search_model,
                     contents=contents,
                     config=config
                 )
@@ -349,7 +379,34 @@ class LeadDiscoveryAgent:
             raise RuntimeError(f"Failed parsing extraction response: {e}")
 
 
-   
+    def _dedupe_leads(self, leads: List[Lead]) -> List[Lead]:
+        """Drop duplicates within a discovery run, keyed by website domain, then name."""
+        seen_domains: set = set()
+        seen_names: set = set()
+        unique: List[Lead] = []
+
+        for lead in leads:
+            website = lead.company_info.website
+            domain = None
+            if website:
+                domain = re.sub(r"^www\.", "", str(website).split("//")[-1].split("/")[0]).lower()
+
+            name = (lead.company_info.name or "").strip().lower()
+            name = re.sub(r"[^a-z0-9]+", "", name)
+
+            if domain and domain in seen_domains:
+                continue
+            if name and name in seen_names:
+                continue
+
+            if domain:
+                seen_domains.add(domain)
+            if name:
+                seen_names.add(name)
+            unique.append(lead)
+
+        return unique
+
     def _validate_leads(self, leads: List[Lead]) -> List[Lead]:
         """Drop obviously-bad records.
 
